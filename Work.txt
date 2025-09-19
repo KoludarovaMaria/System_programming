@@ -1,0 +1,28 @@
+@KoludarovaMaria ➜ /workspaces/System_programming (main) $ bash
+@KoludarovaMaria ➜ /workspaces/System_programming (main) $ mkdir -p Work/Лабораторная\ работа\ №1\!
+@KoludarovaMaria ➜ /workspaces/System_programming (main) $ mkdir -p Work/ Колударова Мария Алексеевна 
+@KoludarovaMaria ➜ /workspaces/System_programming (main) $ ^C
+@KoludarovaMaria ➜ /workspaces/System_programming (main) $ mkdir -p Work/ Колударова\ Мария\ Алексеевна
+@KoludarovaMaria ➜ /workspaces/System_programming (main) $ chmod u+rwx, g+rwx, o+w Work/Лабораторная\ работа\ №1\!
+@KoludarovaMaria ➜ /workspaces/System_programming (main) $ cd Work
+@KoludarovaMaria ➜ /workspaces/System_programming/Work (main) $ touch "Text @1" "Text $2" "Text #3"
+@KoludarovaMaria ➜ /workspaces/System_programming/Work (main) $ echo "Птица говорун отличается умом и сообразительностью!" > "Text @1"
+echo "Отличается умом, отличается сообразительностью..." >> "Text @1"
+@KoludarovaMaria ➜ /workspaces/System_programming/Work (main) $ cat "Text @1" > "Text $2"
+@KoludarovaMaria ➜ /workspaces/System_programming/Work (main) $ mv "Text $2" "Лабораторная работа №1!"/
+@KoludarovaMaria ➜ /workspaces/System_programming/Work (main) $ cp "Text @1" "Колударова Мария Алексеевна"/
+@KoludarovaMaria ➜ /workspaces/System_programming/Work (main) $ gzip "Text @1" "Text #3"
+@KoludarovaMaria ➜ /workspaces/System_programming/Work (main) $ tar -cf MyAchiv.tar "Text @1.gz" "Text #3.gz"
+@KoludarovaMaria ➜ /workspaces/System_programming/Work (main) $ head -n 1 "Text @1.gz" | gunzip -c > "Text #3"
+echo "Будь осторожен! Преступник вооружен!" >> "Text #3"
+@KoludarovaMaria ➜ /workspaces/System_programming/Work (main) $ cd "Колударова Мария Алексеевна"
+tac "Text @1" > Result_one
+@KoludarovaMaria ➜ /workspaces/System_programming/Work/Колударова Мария Алексеевна (main) $ mv Result_one Result_two
+@KoludarovaMaria ➜ /workspaces/System_programming/Work/Колударова Мария Алексеевна (main) $ cd ../Лабораторная\ работа\ №1\!
+@KoludarovaMaria ➜ /workspaces/System_programming/Work/Лабораторная работа №1! (main) $ ls ../"Колударова Мария Алексеевна"/T* > Result_3 2>/dev/null || :
+@KoludarovaMaria ➜ /workspaces/System_programming/Work/Лабораторная работа №1! (main) $ uname -a >> Result_3
+@KoludarovaMaria ➜ /workspaces/System_programming/Work/Лабораторная работа №1! (main) $ date >> Result_3
+
+
+
+
