@@ -1,4 +1,1 @@
-Hello world 123 test 456!
-This is a 7890 number 42 example.
-Price: $99.99 and 100 items.
-Contact: phone 123-456-7890
+ABCDEFGHIJKLMNOPQRSTUVWXYZ

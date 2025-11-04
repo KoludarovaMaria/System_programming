@@ -1,20 +1,7 @@
-section .data
-    error_argc db "Usage: ./program input_file output_file K", 10, 0
-    error_open_input db "Error: Cannot open input file", 10, 0
-    error_open_output db "Error: Cannot open output file", 10, 0
-    error_k_value db "Error: K must be positive integer", 10, 0
-    newline db 10, 0
-    
-section .bss
-    input_fd resq 1
-    output_fd resq 1
-    buffer resb 1024
-    k_value resq 1
-    current_pos resq 1
-    char_buffer resb 1
-    
-section .text
-    global _start
+format ELF64 executable
+
+segment readable executable
+entry _start
 
 _start:
     ; Проверяем количество аргументов
@@ -43,7 +30,7 @@ _start:
     
     ; Создаем/открываем выходной файл для записи
     mov rax, 2          ; sys_open
-    mov rsi, 0x41       ; O_CREAT | O_WRONLY | O_TRUNC
+    mov rsi, 0x41       ; O_CREAT or O_WRONLY or O_TRUNC
     mov rdx, 0644o      ; права доступа
     syscall
     
@@ -59,7 +46,7 @@ _start:
     mov [k_value], rax
     
     ; Инициализируем счетчик позиции
-    mov qword [current_pos], 0
+    mov qword [current_pos], 1  ; начинаем с 1 (первая позиция)
     
 read_loop:
     ; Читаем по одному символу
@@ -74,13 +61,12 @@ read_loop:
     
     ; Проверяем, нужно ли записать этот символ (каждый K-й)
     mov rax, [current_pos]
-    inc qword [current_pos]
     xor rdx, rdx
     div qword [k_value] ; rax = current_pos / k_value, rdx = current_pos % k_value
     
-    ; Если остаток от деления равен 0 (K-й символ), записываем
-    cmp rdx, 0
-    jne read_loop
+    ; Если остаток от деления равен 1 (K-й символ), записываем
+    cmp rdx, 1
+    jne skip_write
     
     ; Записываем символ в выходной файл
     mov rax, 1          ; sys_write
@@ -88,7 +74,10 @@ read_loop:
     mov rsi, char_buffer
     mov rdx, 1
     syscall
-    
+
+skip_write:
+    ; Увеличиваем позицию и продолжаем
+    inc qword [current_pos]
     jmp read_loop
 
 exit_program:
@@ -102,7 +91,7 @@ exit_program:
     syscall
     
     mov rax, 60         ; sys_exit
-    mov rdi, 0
+    xor rdi, rdi
     syscall
 
 ; Функция для преобразования строки в число
@@ -139,13 +128,13 @@ write_error:
     
     ; Находим длину строки
     mov rdx, rsi
-find_length:
+.find_length:
     cmp byte [rdx], 0
-    je found_error_length
+    je .found_error_length
     inc rdx
-    jmp find_length
+    jmp .find_length
     
-found_error_length:
+.found_error_length:
     sub rdx, rsi        ; длина строки в rdx
     
     mov rax, 1          ; sys_write
@@ -180,3 +169,17 @@ exit_error:
     mov rax, 60         ; sys_exit
     mov rdi, 1
     syscall
+
+segment readable writeable
+    error_argc db "Usage: ./program input_file output_file K", 10, 0
+    error_open_input db "Error: Cannot open input file", 10, 0
+    error_open_output db "Error: Cannot open output file", 10, 0
+    error_k_value db "Error: K must be positive integer", 10, 0
+    newline db 10, 0
+    
+    input_fd dq 0
+    output_fd dq 0
+    buffer rb 1024
+    k_value dq 0
+    current_pos dq 0
+    char_buffer rb 1
