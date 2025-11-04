@@ -1,0 +1,6 @@
+# Команды лабораторной работы №1
+fasm Koludarova.asm Koludarova_fasm
+gcc C_version.c -o C_version
+objdump -d Koludarova_fasm > Disassemble_fasm
+objdump -d C_version >> Disassemble_fasm
+# ... и другие команды
