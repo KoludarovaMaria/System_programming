@@ -1,89 +1,63 @@
-section .data
-    symbol db '+'
-    rows equ 11
-    cols equ 6
-    newline db 10
+format ELF executable
+entry _start
 
-section .bss
-    matrix_buffer resb 100
-
-section .text
-    global _start
-
+segment readable executable
 _start:
-    call print_matrix
-    call print_newline
-    call print_triangle
-    
-    mov eax, 1
-    xor ebx, ebx
-    int 0x80
-
-print_matrix:
-    mov esi, matrix_buffer
-    mov ecx, rows
-    
-row_loop:
-    push ecx
-    mov ecx, cols
-    
-col_loop:
-    mov al, [symbol]
-    mov [esi], al
-    inc esi
-    loop col_loop
-    
-    mov byte [esi], 10
-    inc esi
-    pop ecx
-    loop row_loop
-    
+    ; Вывод заголовка
     mov eax, 4
     mov ebx, 1
-    mov ecx, matrix_buffer
-    mov edx, rows * (cols + 1)
+    mov ecx, msg_matrix
+    mov edx, msg_matrix_len
     int 0x80
-    ret
-
-print_triangle:
-    mov esi, matrix_buffer
-    mov ecx, 1
-    mov ebx, rows
     
-triangle_loop:
-    push ecx
-    mov edx, ecx
-    
-symbol_loop:
+    ; Заполнение буфера символами
+    mov ecx, total_chars
+    mov esi, buffer
     mov al, [symbol]
+    
+fill_buffer:
     mov [esi], al
     inc esi
-    dec edx
-    jnz symbol_loop
+    loop fill_buffer
     
-    mov byte [esi], 10
-    inc esi
+    ; Вывод матрицы MxK
+    mov esi, buffer
+    mov ecx, total_lines
     
-    pop ecx
-    inc ecx
-    cmp ecx, ebx
-    jle triangle_loop
+print_lines:
+    push ecx
     
+    ; Вывод одной строки матрицы
     mov eax, 4
     mov ebx, 1
-    mov ecx, matrix_buffer
-    mov edx, ebx
-    imul edx, ebx
-    add edx, ebx
-    shr edx, 1
-    add edx, ebx
+    mov ecx, esi
+    mov edx, chars_per_line
     int 0x80
-    ret
-
-print_newline:
+    
+    ; Переход к следующей строке
+    add esi, chars_per_line
+    
+    ; Новая строка
     mov eax, 4
     mov ebx, 1
     mov ecx, newline
     mov edx, 1
     int 0x80
-    ret
+    
+    pop ecx
+    loop print_lines
+    
+    ; Завершение
+    mov eax, 1
+    xor ebx, ebx
+    int 0x80
+
+segment readable writeable
+    symbol db '+'
+    total_chars = 66
+    chars_per_line = 6
+    total_lines = 11
+    msg_matrix db 'Matrix 6x11:', 10
+    msg_matrix_len = $ - msg_matrix
+    newline db 10
+    buffer rb 100

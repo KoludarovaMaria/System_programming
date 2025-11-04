@@ -1,247 +1,231 @@
-format ELF64
+format ELF64                      ; Формат 64-битного ELF файла для Linux
 
-section '.data' writable
-    prompt db "Введите n: ", 0
-    prompt_len = $ - prompt
-    result_msg db "Автоморфные числа:", 10, 0
-    result_msg_len = $ - result_msg
-    separator db " - ", 0
-    separator_len = $ - separator
-    newline db 10
+section '.data' writable          ; Секция инициализированных данных
+    prompt db "Введите n: ", 0    ; Строка приглашения для ввода
+    prompt_len = $ - prompt       ; Длина строки приглашения
+    result_msg db "Автоморфные числа:", 10, 0 ; Заголовок результата
+    result_msg_len = $ - result_msg ; Длина заголовка
+    separator db " - ", 0         ; Разделитель между числом и квадратом
+    separator_len = $ - separator ; Длина разделителя
+    newline db 10                 ; Символ новой строки
 
-section '.bss' writable
-    n rd 1
-    i rd 1
-    digits rd 1
-    power rq 1
-    square rq 1
-    temp rd 1
-    buffer rb 20
-    num_buf rb 20
+section '.bss' writable           ; Секция неинициализированных данных
+    n rd 1                        ; Переменная для числа n (4 байта)
+    i rd 1                        ; Счетчик цикла i (4 байта)
+    digits rd 1                   ; Количество цифр в числе (4 байта)
+    power rq 1                    ; Степень 10 (10^digits) (8 байт)
+    square rq 1                   ; Квадрат числа (8 байт)
+    temp rd 1                     ; Временная переменная (4 байта)
+    buffer rb 20                  ; Буфер для ввода (20 байт)
+    num_buf rb 20                 ; Буфер для преобразования чисел (20 байт)
 
-section '.text' executable
-public _start
+section '.text' executable        ; Секция исполняемого кода
+public _start                     ; Точка входа программы
 
 _start:
-    ; Вывод приглашения
-    mov rax, 1
-    mov rdi, 1
-    mov rsi, prompt
-    mov rdx, prompt_len
-    syscall
+    ; Вывод приглашения для ввода
+    mov rax, 1                   ; Системный вызов write (1)
+    mov rdi, 1                   ; Файловый дескриптор stdout
+    mov rsi, prompt              ; Указатель на строку приглашения
+    mov rdx, prompt_len          ; Длина строки приглашения
+    syscall                      ; Вызов системного вызова
 
-    ; Чтение числа n
-    mov rax, 0
-    mov rdi, 0
-    mov rsi, buffer
-    mov rdx, 20
-    syscall
+    ; Чтение числа от пользователя
+    mov rax, 0                   ; Системный вызов read (0)
+    mov rdi, 0                   ; Файловый дескриптор stdin
+    mov rsi, buffer              ; Указатель на буфер для ввода
+    mov rdx, 20                  ; Максимальная длина ввода
+    syscall                      ; Вызов системного вызова
 
     ; Преобразование строки в число
-    mov rsi, buffer
-    xor rax, rax
-    xor rbx, rbx
+    mov rsi, buffer              ; Указатель на начало буфера ввода
+    xor rax, rax                 ; Обнуляем RAX (здесь будет результат)
+    xor rbx, rbx                 ; Обнуляем RBX
 convert_loop:
-    mov bl, [rsi]
-    cmp bl, 10
-    je convert_done
-    sub bl, '0'
-    imul rax, 10
-    add rax, rbx
-    inc rsi
-    jmp convert_loop
+    mov bl, [rsi]                ; Загружаем текущий символ из буфера
+    cmp bl, 10                   ; Проверяем символ новой строки
+    je convert_done              ; Если конец строки - выходим из цикла
+    sub bl, '0'                  ; Преобразуем символ ASCII в цифру
+    imul rax, 10                 ; Умножаем текущий результат на 10
+    add rax, rbx                 ; Добавляем новую цифру к результату
+    inc rsi                      ; Переходим к следующему символу
+    jmp convert_loop             ; Продолжаем цикл преобразования
 convert_done:
-    mov [n], eax
+    mov [n], eax                 ; Сохраняем полученное число в n
 
-    ; Вывод заголовка
-    mov rax, 1
-    mov rdi, 1
-    mov rsi, result_msg
-    mov rdx, result_msg_len
-    syscall
+    ; Вывод заголовка результата
+    mov rax, 1                   ; Системный вызов write
+    mov rdi, 1                   ; stdout
+    mov rsi, result_msg          ; Указатель на строку заголовка
+    mov rdx, result_msg_len      ; Длина строки заголовка
+    syscall                      ; Вызов системного вызова
 
-    ; Инициализация цикла
-    mov dword [i], 1
+    ; Инициализация счетчика цикла
+    mov dword [i], 1             ; Устанавливаем начальное значение i = 1
 
 main_loop:
-    mov eax, [i]
-    cmp eax, [n]
-    jg program_end
+    ; Проверка условия завершения цикла
+    mov eax, [i]                 ; Загружаем текущее значение i
+    cmp eax, [n]                 ; Сравниваем i с n
+    jg program_end               ; Если i > n, завершаем программу
 
-    ; Вычисление квадрата
-    mov eax, [i]
-    movsxd rax, eax
-    imul rax, rax
-    mov [square], rax
+    ; Вычисление квадрата текущего числа
+    mov eax, [i]                 ; Загружаем число i
+    movsxd rax, eax              ; Знаково расширяем до 64 бит
+    imul rax, rax                ; Умножаем число на себя (i * i)
+    mov [square], rax            ; Сохраняем квадрат в переменную
 
-    ; Подсчет цифр
-    mov eax, [i]
-    mov [temp], eax
-    mov dword [digits], 0
-
+    ; Подсчет количества цифр в числе i
+    mov eax, [i]                 ; Загружаем число i
+    mov [temp], eax              ; Сохраняем копию во временную переменную
+    mov dword [digits], 0        ; Обнуляем счетчик цифр
 count_digits:
-    mov eax, [temp]
-    test eax, eax
-    jz digits_done
-    inc dword [digits]
-    xor edx, edx
-    mov ecx, 10
-    div ecx
-    mov [temp], eax
-    jmp count_digits
-
+    mov eax, [temp]              ; Загружаем текущее значение
+    test eax, eax                ; Проверяем, не равно ли нулю
+    jz digits_done               ; Если ноль - выходим из цикла
+    inc dword [digits]           ; Увеличиваем счетчик цифр на 1
+    xor edx, edx                 ; Обнуляем EDX для деления
+    mov ecx, 10                  ; Устанавливаем делитель 10
+    div ecx                      ; Делим EAX на 10
+    mov [temp], eax              ; Сохраняем результат деления
+    jmp count_digits             ; Продолжаем подсчет цифр
 digits_done:
-    ; Вычисление 10^digits
-    mov qword [power], 1
-    mov ecx, [digits]
-    test ecx, ecx
-    jz check_automorphic
 
+    ; Вычисление 10^digits (степени 10)
+    mov qword [power], 1         ; Инициализируем степень единицей
+    mov ecx, [digits]            ; Загружаем количество цифр
+    test ecx, ecx                ; Проверяем, не равно ли нулю
+    jz check_automorphic         ; Если digits = 0, пропускаем вычисления
 compute_power:
-    mov rax, [power]
-    mov rbx, 10
-    mul rbx
-    mov [power], rax
-    dec ecx
-    jnz compute_power
+    mov rax, [power]             ; Загружаем текущее значение степени
+    mov rbx, 10                  ; Устанавливаем множитель 10
+    mul rbx                      ; Умножаем текущую степень на 10
+    mov [power], rax             ; Сохраняем новое значение степени
+    dec ecx                      ; Уменьшаем счетчик цикла
+    jnz compute_power            ; Продолжаем пока ECX не станет 0
 
 check_automorphic:
-    ; Проверка условия
-    mov rax, [square]
-    mov rbx, [power]
-    test rbx, rbx
-    jz next_number
-    xor rdx, rdx
-    div rbx
-    mov eax, [i]
-    cmp edx, eax
-    jne next_number
+    ; Проверка является ли число автоморфным
+    mov rax, [square]            ; Загружаем квадрат числа
+    mov rbx, [power]             ; Загружаем степень 10
+    test rbx, rbx                ; Проверяем, не равно ли power нулю
+    jz next_number               ; Если power = 0, пропускаем проверку
+    xor rdx, rdx                 ; Обнуляем RDX для деления
+    div rbx                      ; Делим квадрат на степень 10
+    mov eax, [i]                 ; Загружаем исходное число i
+    cmp edx, eax                 ; Сравниваем остаток с исходным числом
+    jne next_number              ; Если не равны - не автоморфное число
 
-    ; Вывод найденного числа (простой способ)
-    call print_simple_number
+    ; Вывод найденного автоморфного числа
+    call print_simple_number     ; Вызываем процедуру вывода
 
 next_number:
-    inc dword [i]
-    jmp main_loop
+    ; Переход к следующему числу
+    inc dword [i]                ; Увеличиваем счетчик i на 1
+    jmp main_loop                ; Возвращаемся к началу цикла
 
 print_simple_number:
-    ; Простой вывод через системные вызовы для каждого символа
-    ; Вывод числа i
-    mov eax, [i]
-    call print_number
-    
-    ; Вывод разделителя
-    mov rax, 1
-    mov rdi, 1
-    mov rsi, separator
-    mov rdx, separator_len
-    syscall
-    
-    ; Вывод квадрата
-    mov rax, [square]
-    call print_number64
-    
-    ; Новая строка
-    mov rax, 1
-    mov rdi, 1
-    mov rsi, newline
-    mov rdx, 1
-    syscall
-    ret
+    ; Процедура вывода автоморфного числа и его квадрата
+    mov eax, [i]                 ; Загружаем число i
+    call print_number            ; Вызываем процедуру вывода числа
+    mov rax, 1                   ; Системный вызов write
+    mov rdi, 1                   ; stdout
+    mov rsi, separator           ; Указатель на разделитель
+    mov rdx, separator_len       ; Длина разделителя
+    syscall                      ; Вывод разделителя " - "
+    mov rax, [square]            ; Загружаем квадрат числа
+    call print_number64          ; Вызываем процедуру вывода 64-битного числа
+    mov rax, 1                   ; Системный вызов write
+    mov rdi, 1                   ; stdout
+    mov rsi, newline             ; Указатель на символ новой строки
+    mov rdx, 1                   ; Длина 1 символ
+    syscall                      ; Вывод новой строки
+    ret                          ; Возврат из процедуры
 
-; Печать 32-битного числа
 print_number:
-    push rax
+    ; Процедура вывода 32-битного числа
+    push rax                     ; Сохраняем регистры в стеке
     push rbx
     push rcx
     push rdx
     push rdi
     push rsi
-    
-    mov rcx, num_buf + 19
-    mov byte [rcx], 0
-    dec rcx
-    
-    test eax, eax
-    jnz .convert
-    mov byte [rcx], '0'
-    dec rcx
-    jmp .print
-    
+    mov rcx, num_buf + 19        ; Устанавливаем указатель на конец буфера
+    mov byte [rcx], 0            ; Добавляем нулевой терминатор
+    dec rcx                      ; Перемещаемся на одну позицию назад
+    test eax, eax                ; Проверяем, не равно ли число нулю
+    jnz .convert                 ; Если не ноль - переходим к преобразованию
+    mov byte [rcx], '0'          ; Для числа 0 записываем символ '0'
+    dec rcx                      ; Перемещаемся назад
+    jmp .print                   ; Переходим к выводу
 .convert:
-    xor edx, edx
-    mov ebx, 10
-    div ebx
-    add dl, '0'
-    mov [rcx], dl
-    dec rcx
-    test eax, eax
-    jnz .convert
-    
+    xor edx, edx                 ; Обнуляем EDX для деления
+    mov ebx, 10                  ; Устанавливаем делитель 10
+    div ebx                      ; Делим EAX на 10
+    add dl, '0'                  ; Преобразуем остаток в символ ASCII
+    mov [rcx], dl                ; Сохраняем символ в буфер
+    dec rcx                      ; Перемещаемся к предыдущей позиции
+    test eax, eax                ; Проверяем, не стало ли частное нулем
+    jnz .convert                 ; Если не ноль - продолжаем преобразование
 .print:
-    inc rcx
-    mov rsi, rcx
-    mov rdx, num_buf + 20
-    sub rdx, rcx
-    mov rax, 1
-    mov rdi, 1
-    syscall
-    
-    pop rsi
+    inc rcx                      ; Перемещаемся к первому символу числа
+    mov rsi, rcx                 ; Устанавливаем указатель на начало строки
+    mov rdx, num_buf + 20        ; Вычисляем конец буфера
+    sub rdx, rcx                 ; Вычисляем длину строки
+    mov rax, 1                   ; Системный вызов write
+    mov rdi, 1                   ; stdout
+    syscall                      ; Вывод числа
+    pop rsi                      ; Восстанавливаем регистры из стека
     pop rdi
     pop rdx
     pop rcx
     pop rbx
     pop rax
-    ret
+    ret                          ; Возврат из процедуры
 
-; Печать 64-битного числа
 print_number64:
-    push rax
+    ; Процедура вывода 64-битного числа
+    push rax                     ; Сохраняем регистры в стеке
     push rbx
     push rcx
     push rdx
     push rdi
     push rsi
-    
-    mov rcx, num_buf + 19
-    mov byte [rcx], 0
-    dec rcx
-    
-    test rax, rax
-    jnz .convert
-    mov byte [rcx], '0'
-    dec rcx
-    jmp .print
-    
+    mov rcx, num_buf + 19        ; Устанавливаем указатель на конец буфера
+    mov byte [rcx], 0            ; Добавляем нулевой терминатор
+    dec rcx                      ; Перемещаемся на одну позицию назад
+    test rax, rax                ; Проверяем, не равно ли число нулю
+    jnz .convert                 ; Если не ноль - переходим к преобразованию
+    mov byte [rcx], '0'          ; Для числа 0 записываем символ '0'
+    dec rcx                      ; Перемещаемся назад
+    jmp .print                   ; Переходим к выводу
 .convert:
-    xor rdx, rdx
-    mov rbx, 10
-    div rbx
-    add dl, '0'
-    mov [rcx], dl
-    dec rcx
-    test rax, rax
-    jnz .convert
-    
+    xor rdx, rdx                 ; Обнуляем RDX для деления
+    mov rbx, 10                  ; Устанавливаем делитель 10
+    div rbx                      ; Делим RAX на 10
+    add dl, '0'                  ; Преобразуем остаток в символ ASCII
+    mov [rcx], dl                ; Сохраняем символ в буфер
+    dec rcx                      ; Перемещаемся к предыдущей позиции
+    test rax, rax                ; Проверяем, не стало ли частное нулем
+    jnz .convert                 ; Если не ноль - продолжаем преобразование
 .print:
-    inc rcx
-    mov rsi, rcx
-    mov rdx, num_buf + 20
-    sub rdx, rcx
-    mov rax, 1
-    mov rdi, 1
-    syscall
-    
-    pop rsi
+    inc rcx                      ; Перемещаемся к первому символу числа
+    mov rsi, rcx                 ; Устанавливаем указатель на начало строки
+    mov rdx, num_buf + 20        ; Вычисляем конец буфера
+    sub rdx, rcx                 ; Вычисляем длину строки
+    mov rax, 1                   ; Системный вызов write
+    mov rdi, 1                   ; stdout
+    syscall                      ; Вывод числа
+    pop rsi                      ; Восстанавливаем регистры из стека
     pop rdi
     pop rdx
     pop rcx
     pop rbx
     pop rax
-    ret
+    ret                          ; Возврат из процедуры
 
 program_end:
-    mov rax, 60
-    xor rdi, rdi
-    syscall
+    ; Завершение программы
+    mov rax, 60                  ; Системный вызов exit (60)
+    xor rdi, rdi                 ; Код возврата 0
+    syscall                      ; Завершение программы

@@ -1,40 +1,55 @@
-section .data
-    symbol db '8'
-    newline db 10
+format ELF executable
+entry _start
 
-section .text
-    global _start
-
+segment readable executable
 _start:
-    mov ecx, 6
-    mov ebx, 1
-    
-triangle_rows:
-    push ecx
-    push ebx
-    
-    mov ecx, ebx
-print_symbols:
-    push ecx
+    ; Вывод заголовка
     mov eax, 4
     mov ebx, 1
-    mov ecx, symbol
-    mov edx, 1
+    mov ecx, msg_triangle
+    mov edx, msg_triangle_len
     int 0x80
-    pop ecx
-    loop print_symbols
     
+    mov edi, buffer
+    mov ecx, 1  ; количество символов в первой строке
+    
+triangle_loop:
+    push ecx
+    mov al, [symbol]
+    
+    ; Заполнение строки символами
+    mov ebx, ecx
+fill_line:
+    mov [edi], al
+    inc edi
+    dec ebx
+    jnz fill_line
+    
+    ; Добавление новой строки
+    mov byte [edi], 10
+    inc edi
+    
+    pop ecx
+    inc ecx
+    cmp ecx, total_lines
+    jle triangle_loop
+    
+    ; Вывод треугольника
     mov eax, 4
     mov ebx, 1
-    mov ecx, newline
-    mov edx, 1
+    mov ecx, buffer
+    mov edx, edi
+    sub edx, buffer
     int 0x80
     
-    pop ebx
-    pop ecx
-    inc ebx
-    loop triangle_rows
-    
+    ; Завершение
     mov eax, 1
     xor ebx, ebx
     int 0x80
+
+segment readable writeable
+    symbol db '+'
+    total_lines = 11
+    msg_triangle db 'Triangle:', 10
+    msg_triangle_len = $ - msg_triangle
+    buffer rb 100
