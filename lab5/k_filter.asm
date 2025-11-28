@@ -1,185 +1,233 @@
-format ELF64 executable
+format ELF64 executable  ; Формат для 64-битного Linux ELF исполняемого файла
 
-segment readable executable
-entry _start
+segment readable executable  ; Сегмент для исполняемого кода
+entry _start                 ; Точка входа в программу
 
 _start:
-    ; Проверяем количество аргументов
-    pop rcx
-    cmp rcx, 4
-    jne error_arguments
+    pop rcx                 ; Получить количество аргументов (argc) из стека
+    cmp rcx, 3              ; Сравнить с ожидаемым количеством (3: program, input, output)
+    jne error_arguments     ; Если не равно, перейти к ошибке аргументов
+
+    pop rdi                 ; Пропустить первый аргумент (имя программы)
+    pop rdi                 ; Получить второй аргумент (имя входного файла)
+
+    ; Открытие входного файла
+    mov rax, 2              ; Номер системного вызова sys_open
+    mov rsi, 0              ; Флаги: O_RDONLY (только чтение)
+    mov rdx, 0              ; Режим доступа (не используется для чтения)
+    syscall                 ; Вызов системного вызова
     
-    ; Пропускаем имя программы
-    pop rdi
+    cmp rax, 0              ; Проверить результат открытия файла
+    jl error_open_input_file ; Если отрицательный (ошибка), перейти к обработке ошибки
+    mov [input_fd], rax     ; Сохранить файловый дескриптор входного файла
     
-    ; Получаем имя входного файла
-    pop rdi
+    pop rdi                 ; Получить третий аргумент (имя выходного файла)
+
+    ; Открытие выходного файла
+    mov rax, 2              ; Номер системного вызова sys_open
+    mov rsi, 0x41           ; Флаги: O_CREAT | O_WRONLY | O_TRUNC (создать, запись, очистить)
+    mov rdx, 0644o          ; Режим доступа: rw-r--r-- (в восьмеричной системе)
+    syscall                 ; Вызов системного вызова
     
-    ; Открываем входной файл для чтения
-    mov rax, 2          ; sys_open
-    mov rsi, 0          ; O_RDONLY
-    mov rdx, 0          ; mode
-    syscall
+    cmp rax, 0              ; Проверить результат открытия файла
+    jl error_open_output_file ; Если отрицательный (ошибка), перейти к обработке ошибки
+    mov [output_fd], rax    ; Сохранить файловый дескриптор выходного файла
     
-    cmp rax, 0
-    jl error_open_input_file
-    mov [input_fd], rax
-    
-    ; Получаем имя выходного файла
-    pop rdi
-    
-    ; Создаем/открываем выходной файл для записи
-    mov rax, 2          ; sys_open
-    mov rsi, 0x41       ; O_CREAT or O_WRONLY or O_TRUNC
-    mov rdx, 0644o      ; права доступа
-    syscall
-    
-    cmp rax, 0
-    jl error_open_output_file
-    mov [output_fd], rax
-    
-    ; Получаем значение K
-    pop rdi
-    call string_to_int
-    cmp rax, 0
-    jle error_k_value_invalid
-    mov [k_value], rax
-    
-    ; Инициализируем счетчик позиции
-    mov qword [current_pos], 1  ; начинаем с 1 (первая позиция)
+    mov byte [in_number], 0 ; Инициализировать флаг "в числе" в 0 (false)
     
 read_loop:
-    ; Читаем по одному символу
-    mov rax, 0          ; sys_read
-    mov rdi, [input_fd]
-    mov rsi, char_buffer
-    mov rdx, 1
-    syscall
+    ; Чтение данных из входного файла
+    mov rax, 0              ; Номер системного вызова sys_read
+    mov rdi, [input_fd]     ; Файловый дескриптор входного файла
+    mov rsi, buffer         ; Указатель на буфер для чтения
+    mov rdx, 1024           ; Размер буфера (1024 байта)
+    syscall                 ; Вызов системного вызова
     
-    cmp rax, 0
-    jle exit_program    ; Если конец файла или ошибка
+    cmp rax, 0              ; Проверить количество прочитанных байтов
+    jle process_final_number ; Если <= 0 (конец файла или ошибка), обработать последнее число
     
-    ; Проверяем, нужно ли записать этот символ (каждый K-й)
-    mov rax, [current_pos]
-    xor rdx, rdx
-    div qword [k_value] ; rax = current_pos / k_value, rdx = current_pos % k_value
+    mov rcx, rax            ; Сохранить количество прочитанных байтов в RCX
+    mov rsi, buffer         ; Указатель на начало буфера
     
-    ; Если остаток от деления равен 1 (K-й символ), записываем
-    cmp rdx, 1
-    jne skip_write
+process_buffer:
+    mov al, [rsi]           ; Загрузить текущий символ из буфера
     
-    ; Записываем символ в выходной файл
-    mov rax, 1          ; sys_write
-    mov rdi, [output_fd]
-    mov rsi, char_buffer
-    mov rdx, 1
-    syscall
+    ; Проверка является ли символ цифрой (0-9)
+    cmp al, '0'             ; Сравнить с '0'
+    jb not_digit            ; Если меньше, это не цифра
+    cmp al, '9'             ; Сравнить с '9'
+    ja not_digit            ; Если больше, это не цифра
 
-skip_write:
-    ; Увеличиваем позицию и продолжаем
-    inc qword [current_pos]
-    jmp read_loop
+    call add_to_number      ; Вызов функции добавления цифры к текущему числу
+    jmp next_char           ; Перейти к следующему символу
+    
+not_digit:
+    cmp byte [in_number], 1 ; Проверить флаг "в числе"
+    jne next_char           ; Если не в числе, перейти к следующему символу
+    call finish_number      ; Если был в числе, завершить число
+    
+next_char:
+    inc rsi                 ; Перейти к следующему символу в буфере
+    loop process_buffer     ; Повторить для всех символов в буфере (RCX раз)
+    jmp read_loop           ; Продолжить чтение файла
+
+process_final_number:
+    cmp byte [in_number], 1 ; Проверить, обрабатывалось ли число в конце
+    jne exit_program        ; Если нет, выйти из программы
+    call finish_number      ; Завершить последнее число
 
 exit_program:
-    ; Закрываем файлы
-    mov rax, 3          ; sys_close
-    mov rdi, [input_fd]
-    syscall
+    ; Закрытие входного файла
+    mov rax, 3              ; Номер системного вызова sys_close
+    mov rdi, [input_fd]     ; Файловый дескриптор входного файла
+    syscall                 ; Вызов системного вызова
     
-    mov rax, 3          ; sys_close
-    mov rdi, [output_fd]
-    syscall
+    ; Закрытие выходного файла
+    mov rax, 3              ; Номер системного вызова sys_close
+    mov rdi, [output_fd]    ; Файловый дескриптор выходного файла
+    syscall                 ; Вызов системного вызова
     
-    mov rax, 60         ; sys_exit
-    xor rdi, rdi
-    syscall
+    ; Завершение программы
+    mov rax, 60             ; Номер системного вызова sys_exit
+    mov rdi, 0              ; Код возврата 0 (успех)
+    syscall                 ; Вызов системного вызова
 
-; Функция для преобразования строки в число
-; rdi - указатель на строку
-; возвращает rax - число
-string_to_int:
-    xor rax, rax        ; обнуляем результат
-    xor rcx, rcx        ; обнуляем счетчик
-    
-convert_loop:
-    movzx rdx, byte [rdi + rcx]
-    cmp rdx, 0
-    je done_convert
-    cmp rdx, '0'
-    jb done_convert
-    cmp rdx, '9'
-    ja done_convert
-    
-    sub rdx, '0'        ; преобразуем символ в цифру
-    imul rax, 10        ; умножаем текущий результат на 10
-    add rax, rdx        ; добавляем новую цифру
-    
-    inc rcx
-    jmp convert_loop
-    
-done_convert:
-    ret
-
-; Функция для записи строки в stderr
-; rsi - указатель на строку
-write_error:
+; Функция добавления цифры к текущему числу
+add_to_number:
+    push rsi                ; Сохранить регистры
     push rcx
+    
+    mov rdi, number_buffer  ; Указатель на буфер числа
+    cmp byte [in_number], 0 ; Проверить, это первая цифра числа?
+    je .first_digit         ; Если да, перейти к обработке первой цифры
+    
+.find_end:
+    cmp byte [rdi], 0       ; Найти конец текущего числа (нулевой байт)
+    je .add_digit           ; Если найден, добавить цифру
+    inc rdi                 ; Перейти к следующему байту
+    jmp .find_end           ; Продолжить поиск
+    
+.first_digit:
+    mov byte [in_number], 1 ; Установить флаг "в числе" в 1 (true)
+    
+.add_digit:
+    mov [rdi], al           ; Добавить цифру в буфер числа
+    inc rdi                 ; Переместить указатель на следующую позицию
+    mov byte [rdi], 0       ; Добавить нулевой байт (терминатор строки)
+    
+    pop rcx                 ; Восстановить регистры
+    pop rsi
+    ret                     ; Возврат из функции
+
+; Функция завершения обработки числа
+finish_number:
+    push rsi                ; Сохранить регистры
+    push rcx
+    
+    cmp byte [number_buffer], 0 ; Проверить, есть ли число в буфере
+    je .done                ; Если нет, завершить
+    
+    mov rdi, [output_fd]    ; Файловый дескриптор выходного файла
+    mov rsi, number_buffer  ; Указатель на буфер числа
+    call write_string       ; Записать число в файл
+    
+    mov rdi, [output_fd]    ; Файловый дескриптор выходного файла
+    mov rsi, space          ; Указатель на строку с пробелом
+    call write_string       ; Записать пробел после числа
+    
+    ; Очистка буфера числа
+    mov rdi, number_buffer  ; Указатель на буфер числа
+    mov rcx, 32             ; Количество байтов для очистки
+    xor al, al              ; AL = 0 (значение для заполнения)
+    rep stosb               ; Повторно заполнить буфер нулями (RCX раз)
+    
+.done:
+    mov byte [in_number], 0 ; Сбросить флаг "в числе" в 0 (false)
+    pop rcx                 ; Восстановить регистры
+    pop rsi
+    ret                     ; Возврат из функции
+
+; Функция записи строки в файл
+write_string:
+    push rcx                ; Сохранить регистры
     push rdx
-    
-    ; Находим длину строки
-    mov rdx, rsi
+    push rsi
+
+    mov rdx, rsi            ; Начало строки для вычисления длины
 .find_length:
-    cmp byte [rdx], 0
-    je .found_error_length
-    inc rdx
-    jmp .find_length
+    cmp byte [rdx], 0       ; Поиск нулевого байта (конца строки)
+    je .found_length        ; Если найден, перейти к вычислению длины
+    inc rdx                 ; Перейти к следующему байту
+    jmp .find_length        ; Продолжить поиск
     
-.found_error_length:
-    sub rdx, rsi        ; длина строки в rdx
+.found_length:
+    sub rdx, rsi            ; Вычислить длину строки (конец - начало)
+    mov rax, 1              ; Номер системного вызова sys_write
+    syscall                 ; Вызов системного вызова
     
-    mov rax, 1          ; sys_write
-    mov rdi, 2          ; stderr
-    syscall
-    
+    pop rsi                 ; Восстановить регистры
     pop rdx
     pop rcx
-    ret
+    ret                     ; Возврат из функции
+
+; Функция записи сообщения об ошибке в stderr
+write_error:
+    push rcx                ; Сохранить регистры
+    push rdx
+    
+    mov rdx, rsi            ; Начало строки для вычисления длины
+.find_error_length:
+    cmp byte [rdx], 0       ; Поиск нулевого байта (конца строки)
+    je .found_error_length  ; Если найден, перейти к вычислению длины
+    inc rdx                 ; Перейти к следующему байту
+    jmp .find_error_length  ; Продолжить поиск
+    
+.found_error_length:
+    sub rdx, rsi            ; Вычислить длину строки (конец - начало)
+    mov rax, 1              ; Номер системного вызова sys_write
+    mov rdi, 2              ; Файловый дескриптор stderr (стандартный вывод ошибок)
+    syscall                 ; Вызов системного вызова
+    
+    pop rdx                 ; Восстановить регистры
+    pop rcx
+    ret                     ; Возврат из функции
 
 ; Обработчики ошибок
 error_arguments:
-    mov rsi, error_argc
-    call write_error
-    jmp exit_error
+    mov rsi, error_argc     ; Указатель на сообщение об ошибке аргументов
+    call write_error        ; Вывод сообщения об ошибке
+    jmp exit_error          ; Переход к завершению с ошибкой
 
 error_open_input_file:
-    mov rsi, error_open_input
-    call write_error
-    jmp exit_error
+    mov rsi, error_open_input ; Указатель на сообщение об ошибке открытия входного файла
+    call write_error        ; Вывод сообщения об ошибке
+    jmp exit_error          ; Переход к завершению с ошибкой
 
 error_open_output_file:
-    mov rsi, error_open_output
-    call write_error
-    jmp exit_error
-
-error_k_value_invalid:
-    mov rsi, error_k_value
-    call write_error
+    mov rsi, error_open_output ; Указатель на сообщение об ошибке открытия выходного файла
+    call write_error        ; Вывод сообщения об ошибке
+    jmp exit_error          ; Переход к завершению с ошибкой
 
 exit_error:
-    mov rax, 60         ; sys_exit
-    mov rdi, 1
-    syscall
+    mov rax, 60             ; Номер системного вызова sys_exit
+    mov rdi, 1              ; Код возврата 1 (ошибка)
+    syscall                 ; Вызов системного вызова
 
+; Сегмент данных
 segment readable writeable
-    error_argc db "Usage: ./program input_file output_file K", 10, 0
-    error_open_input db "Error: Cannot open input file", 10, 0
-    error_open_output db "Error: Cannot open output file", 10, 0
-    error_k_value db "Error: K must be positive integer", 10, 0
-    newline db 10, 0
-    
-    input_fd dq 0
-    output_fd dq 0
-    buffer rb 1024
-    k_value dq 0
-    current_pos dq 0
-    char_buffer rb 1
+
+; Сообщения об ошибках и служебные строки
+error_argc db "Usage: ./program input_file output_file", 10, 0  ; Сообщение о неправильном использовании
+error_open_input db "Error: Cannot open input file", 10, 0      ; Ошибка открытия входного файла
+error_open_output db "Error: Cannot open output file", 10, 0    ; Ошибка открытия выходного файла
+space db " ", 0               ; Строка с пробелом для разделения чисел
+newline db 10, 0              ; Строка с переводом строки
+
+; Файловые дескрипторы
+input_fd dq 1                 ; Дескриптор входного файла
+output_fd dq 1                ; Дескриптор выходного файла
+
+; Буферы
+buffer rb 1024                ; Буфер для чтения из файла (1024 байта)
+number_buffer rb 32           ; Буфер для сборки числа (32 байта)
+in_number rb 1                ; Флаг: 1 = обрабатывается число, 0 = нет

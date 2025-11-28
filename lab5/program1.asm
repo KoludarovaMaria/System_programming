@@ -1,188 +1,263 @@
+format ELF64 executable
 
-section .data
-    error_argc db "Usage: ./program input_file output_file K", 10, 0
-    error_open_input db "Error: Cannot open input file", 10, 0
-    error_open_output db "Error: Cannot open output file", 10, 0
-    error_k_value db "Error: K must be positive integer", 10, 0
-    newline db 10, 0
-    
-section .bss
-    input_fd resq 1
-    output_fd resq 1
-    buffer resb 1024
-    k_value resq 1
-    current_pos resq 1
-    char_buffer resb 1
-    
-section .text
-    global _start
+segment readable executable
+entry start
 
-_start:
-    ; Проверяем количество аргументов
+; Системные вызовы
+SYS_READ    = 0
+SYS_WRITE   = 1
+SYS_OPEN    = 2
+SYS_CLOSE   = 3
+SYS_EXIT    = 60
+
+; Флаги открытия файлов
+O_RDONLY    = 0
+O_WRONLY    = 1
+O_CREAT     = 64
+O_TRUNC     = 512
+
+STDERR      = 2
+
+start:
+    ; Получаем количество аргументов
     pop rcx
-    cmp rcx, 4
-    jne error_arguments
+    cmp rcx, 3
+    jne error_args
     
     ; Пропускаем имя программы
     pop rdi
     
-    ; Получаем имя входного файла
+    ; Открываем входной файл
     pop rdi
-    
-    ; Открываем входной файл для чтения
-    mov rax, 2          ; sys_open
-    mov rsi, 0          ; O_RDONLY
-    mov rdx, 0          ; mode
+    mov rax, SYS_OPEN
+    mov rsi, O_RDONLY
+    mov rdx, 0
     syscall
-    
     cmp rax, 0
-    jl error_open_input_file
+    jl error_input
     mov [input_fd], rax
     
-    ; Получаем имя выходного файла
+    ; Открываем выходной файл
     pop rdi
-    
-    ; Создаем/открываем выходной файл для записи
-    mov rax, 2          ; sys_open
-    mov rsi, 0x41       ; O_CREAT | O_WRONLY | O_TRUNC
-    mov rdx, 0644o      ; права доступа
+    mov rax, SYS_OPEN
+    mov rsi, O_WRONLY or O_CREAT or O_TRUNC
+    mov rdx, 0644o
     syscall
-    
     cmp rax, 0
-    jl error_open_output_file
+    jl error_output
     mov [output_fd], rax
-    
-    ; Получаем значение K
-    pop rdi
-    call string_to_int
-    cmp rax, 0
-    jle error_k_value_invalid
-    mov [k_value], rax
-    
-    ; Инициализируем счетчик позиции
-    mov qword [current_pos], 1  ; начинаем с 1 (первая позиция)
-    
+
+    ; Инициализация
+    mov qword [lines_count], 0
+    mov qword [buffer_ptr], line_buffer
+
 read_loop:
-    ; Читаем по одному символу
-    mov rax, 0          ; sys_read
+    ; Читаем строку
+    mov rsi, [buffer_ptr]  ; текущая позиция в буфере
+    mov r12, rsi           ; сохраняем начало строки
+    
+read_char:
+    ; Читаем один символ
+    mov rax, SYS_READ
     mov rdi, [input_fd]
     mov rsi, char_buffer
     mov rdx, 1
     syscall
     
     cmp rax, 0
-    jle exit_program    ; Если конец файла или ошибка
+    jle check_last_line    ; конец файла или ошибка
     
-    ; Проверяем, нужно ли записать этот символ (каждый K-й)
-    mov rax, [current_pos]
-    xor rdx, rdx
-    div qword [k_value] ; rax = current_pos / k_value, rdx = current_pos % k_value
+    mov al, [char_buffer]
     
-    ; Если остаток от деления равен 1 (K-й символ), записываем
-    cmp rdx, 1
-    jne skip_write
+    ; Сохраняем символ в буфере
+    mov rsi, [buffer_ptr]
+    mov [rsi], al
+    inc qword [buffer_ptr]
     
-    ; Записываем символ в выходной файл
-    mov rax, 1          ; sys_write
-    mov rdi, [output_fd]
-    mov rsi, char_buffer
-    mov rdx, 1
-    syscall
-
-skip_write:
-    ; Увеличиваем позицию и продолжаем
-    inc qword [current_pos]
+    ; Проверяем конец строки
+    cmp al, 10
+    jne read_char
+    
+    ; Заменяем \n на 0
+    mov rsi, [buffer_ptr]
+    dec rsi
+    mov byte [rsi], 0
+    
+    ; Сохраняем указатель на строку
+    mov rbx, [lines_count]
+    shl rbx, 3
+    add rbx, lines_array
+    mov [rbx], r12
+    
+    inc qword [lines_count]
+    
+    ; Проверяем лимиты
+    cmp qword [lines_count], 10000
+    jae error_too_many_lines
+    
+    mov rax, [buffer_ptr]
+    cmp rax, line_buffer_end
+    jae error_buffer_overflow
+    
     jmp read_loop
 
-exit_program:
-    ; Закрываем файлы
-    mov rax, 3          ; sys_close
+check_last_line:
+    ; Проверяем, есть ли последняя строка без \n
+    cmp r12, [buffer_ptr]
+    je finish_reading
+    
+    ; Сохраняем последнюю строку
+    mov rsi, [buffer_ptr]
+    mov byte [rsi], 0
+    
+    mov rbx, [lines_count]
+    shl rbx, 3
+    add rbx, lines_array
+    mov [rbx], r12
+    
+    inc qword [lines_count]
+
+finish_reading:
+    ; Закрываем входной файл
+    mov rax, SYS_CLOSE
     mov rdi, [input_fd]
     syscall
+
+    ; Записываем строки в обратном порядке
+    mov rcx, [lines_count]
+    test rcx, rcx
+    jz close_output
     
-    mov rax, 3          ; sys_close
+    dec rcx
+
+write_loop:
+    ; Получаем указатель на строку
+    mov rax, rcx
+    shl rax, 3
+    add rax, lines_array
+    mov rsi, [rax]
+    
+    ; Вычисляем длину строки
+    mov rdi, rsi
+    call strlen
+    mov rdx, rax
+    
+    ; Записываем строку
+    mov rax, SYS_WRITE
     mov rdi, [output_fd]
     syscall
     
-    mov rax, 60         ; sys_exit
-    mov rdi, 0
+    ; Записываем перевод строки (кроме последней строки)
+    cmp rcx, 0
+    je no_newline
+    
+    mov rax, SYS_WRITE
+    mov rdi, [output_fd]
+    mov rsi, newline
+    mov rdx, 1
     syscall
 
-; Функция для преобразования строки в число
+no_newline:
+    dec rcx
+    jns write_loop
+
+close_output:
+    ; Закрываем выходной файл
+    mov rax, SYS_CLOSE
+    mov rdi, [output_fd]
+    syscall
+    
+    ; Успешный выход
+    mov rax, SYS_EXIT
+    xor rdi, rdi
+    syscall
+
+; Вычисление длины строки
 ; rdi - указатель на строку
-; возвращает rax - число
-string_to_int:
-    xor rax, rax        ; обнуляем результат
-    xor rcx, rcx        ; обнуляем счетчик
-    
-convert_loop:
-    movzx rdx, byte [rdi + rcx]
-    cmp rdx, 0
-    je done_convert
-    cmp rdx, '0'
-    jb done_convert
-    cmp rdx, '9'
-    ja done_convert
-    
-    sub rdx, '0'        ; преобразуем символ в цифру
-    imul rax, 10        ; умножаем текущий результат на 10
-    add rax, rdx        ; добавляем новую цифру
-    
-    inc rcx
-    jmp convert_loop
-    
-done_convert:
+; возвращает rax - длина
+strlen:
+    xor rax, rax
+.loop:
+    cmp byte [rdi + rax], 0
+    je .done
+    inc rax
+    jmp .loop
+.done:
     ret
 
-; Функция для записи строки в stderr
-; rsi - указатель на строку
-write_error:
-    push rcx
-    push rdx
-    
-    ; Находим длину строки
-    mov rdx, rsi
-find_length:
-    cmp byte [rdx], 0
-    je found_error_length
-    inc rdx
-    jmp find_length
-    
-found_error_length:
-    sub rdx, rsi        ; длина строки в rdx
-    
-    mov rax, 1          ; sys_write
-    mov rdi, 2          ; stderr
+; Обработка ошибок
+error_args:
+    mov rsi, msg_args
+    mov rdx, msg_args_len
+    jmp error_exit
+
+error_input:
+    mov rsi, msg_input
+    mov rdx, msg_input_len
+    jmp error_exit
+
+error_output:
+    mov rsi, msg_output
+    mov rdx, msg_output_len
+    jmp error_exit
+
+error_buffer_overflow:
+    mov rsi, msg_buffer
+    mov rdx, msg_buffer_len
+    jmp error_exit
+
+error_too_many_lines:
+    mov rsi, msg_too_many
+    mov rdx, msg_too_many_len
+
+error_exit:
+    mov rax, SYS_WRITE
+    mov rdi, STDERR
     syscall
     
-    pop rdx
-    pop rcx
-    ret
-
-; Обработчики ошибок
-error_arguments:
-    mov rsi, error_argc
-    call write_error
-    jmp exit_error
-
-error_open_input_file:
-    mov rsi, error_open_input
-    call write_error
-    jmp exit_error
-
-error_open_output_file:
-    mov rsi, error_open_output
-    call write_error
-    jmp exit_error
-
-error_k_value_invalid:
-    mov rsi, error_k_value
-    call write_error
-
-exit_error:
-    mov rax, 60         ; sys_exit
+    ; Закрываем файлы при ошибке
+    mov rax, SYS_CLOSE
+    mov rdi, [input_fd]
+    syscall
+    
+    mov rax, SYS_CLOSE
+    mov rdi, [output_fd]
+    syscall
+    
+    mov rax, SYS_EXIT
     mov rdi, 1
     syscall
-		
 
+segment readable writeable
+    input_fd      dq 0
+    output_fd     dq 0
+    lines_count   dq 0
+    buffer_ptr    dq 0
+    
+    char_buffer   db 0
+    newline       db 10
 
+    ; Сообщения об ошибках
+    msg_args      db "Usage: ./program input.txt output.txt", 10
+    msg_args_len  = $ - msg_args
+    
+    msg_input     db "Error: Cannot open input file", 10
+    msg_input_len = $ - msg_input
+    
+    msg_output    db "Error: Cannot open output file", 10
+    msg_output_len = $ - msg_output
+    
+    msg_buffer    db "Error: Buffer overflow - file too large", 10
+    msg_buffer_len = $ - msg_buffer
+    
+    msg_too_many  db "Error: Too many lines (max 10000)", 10
+    msg_too_many_len = $ - msg_too_many
+
+; Буфер для данных (1MB)
+line_buffer:
+    times 1048576 db 0
+line_buffer_end:
+
+; Массив указателей на строки (10000 указателей)
+lines_array:
+    times 10000 dq 0

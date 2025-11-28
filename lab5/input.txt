@@ -1,1 +1,5 @@
-ABCDEFGHIJKLMNOPQRSTUVWXYZ
+Hello, World!
+Line with "quotes"
+Line with $pecial char&
+Line with numbers 12345
+EOF line (no newline at end)
