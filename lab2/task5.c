@@ -1,7 +1,7 @@
 #include <stdio.h>
 
 int main() {
-    long long number = 5277616985;
+    long long number = 3469816182;
     int sum = 0;
     long long temp = number;
     
