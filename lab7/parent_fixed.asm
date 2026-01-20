@@ -1,91 +1,90 @@
-format ELF executable  ; Формат ELF для исполняемого файла Linux
-entry _start           ; Точка входа в программу
+format ELF executable
+entry _start
 
-segment readable executable  ; Сегмент исполняемого кода
+segment readable executable
 
 _start:
-    mov ebp, esp       ; Сохраняем указатель стека для отладки/профилирования
+    mov ebp, esp
     
-main_loop:             ; Основной цикл программы
-    ; Вывод приглашения для ввода команды
-    mov eax, 4         ; Системный вызов sys_write (4)
-    mov ebx, 1         ; Файловый дескриптор stdout (1)
-    mov ecx, prompt    ; Указатель на строку "Введите команду: "
-    mov edx, prompt_len ; Длина строки приглашения
-    int 0x80           ; Вывод приглашения на экран
+main_loop:
+    ; Вывод приглашения
+    mov eax, 4
+    mov ebx, 1
+    mov ecx, prompt
+    mov edx, prompt_len
+    int 0x80
     
-    ; Чтение ввода пользователя с клавиатуры
-    mov eax, 3         ; Системный вызов sys_read (3)
-    mov ebx, 0         ; Файловый дескриптор stdin (0)
-    mov ecx, input     ; Указатель на буфер для ввода
-    mov edx, 255       ; Максимальная длина ввода (255 байт)
-    int 0x80           ; Чтение ввода пользователя
+    ; Чтение ввода
+    mov eax, 3
+    mov ebx, 0
+    mov ecx, input
+    mov edx, 255
+    int 0x80
     
-    ; Проверка на EOF (конец файла) - важно при чтении из pipe/файла
-    test eax, eax      ; Проверяем, сколько байт было прочитано
-    jz exit_program    ; Если 0 байт (EOF) - завершаем программу
+    ; Проверка на EOF (когда ввод из pipe)
+    test eax, eax
+    jz exit_program
     
-    ; Проверка на пустую строку (только символ новой строки)
-    cmp eax, 1         ; Сравниваем длину ввода с 1
-    jle main_loop      ; Если <= 1 (пустая строка) - возвращаемся к началу цикла
+    ; Проверка на пустую строку
+    cmp eax, 1
+    jle main_loop
     
-    ; Убираем символ новой строки (\n) в конце введенной строки
-    mov esi, input     ; ESI указывает на начало буфера ввода
-    add esi, eax       ; Добавляем длину ввода - теперь ESI указывает ЗА конец строки
-    dec esi            ; Декрементируем - теперь ESI указывает на последний символ
-    mov byte [esi], 0  ; Заменяем символ новой строки на нулевой байт (терминатор строки)
+    ; Убираем символ новой строки
+    mov esi, input
+    add esi, eax
+    dec esi
+    mov byte [esi], 0
     
-    ; Проверка на команду "exit" для выхода из шелла
-    mov edi, input     ; EDI указывает на начало строки ввода
-    cmp byte [edi], 'e' ; Проверяем первый символ
-    jne .not_exit      ; Если не 'e' - это не команда exit
-    cmp byte [edi+1], 'x' ; Проверяем второй символ
-    jne .not_exit      ; Если не 'x' - это не команда exit
-    cmp byte [edi+2], 'i' ; Проверяем третий символ
-    jne .not_exit      ; Если не 'i' - это не команда exit
-    cmp byte [edi+3], 't' ; Проверяем четвертый символ
-    jne .not_exit      ; Если не 't' - это не команда exit
-    cmp byte [edi+4], 0 ; Проверяем пятый символ (должен быть нулевой)
-    je exit_program    ; Если вся строка "exit\0" - завершаем программу
+    ; Проверка на exit
+    mov edi, input
+    cmp byte [edi], 'e'
+    jne .not_exit
+    cmp byte [edi+1], 'x'
+    jne .not_exit
+    cmp byte [edi+2], 'i'
+    jne .not_exit
+    cmp byte [edi+3], 't'
+    jne .not_exit
+    cmp byte [edi+4], 0
+    je exit_program
     
-.not_exit:             ; Если введена не команда exit
-    ; Создаем дочерний процесс с помощью fork()
-    mov eax, 2         ; Системный вызов sys_fork (2)
-    int 0x80           ; Создаем копию текущего процесса
+.not_exit:
+    ; Создаем дочерний процесс
+    mov eax, 2
+    int 0x80
     
-    test eax, eax      ; Проверяем результат fork()
-    jz .child_process  ; Если 0 - мы в дочернем процессе
-                       ; Иначе в родительском, eax содержит PID дочернего процесса
+    test eax, eax
+    jz .child_process
     
-    ; Родительский процесс - ждем завершения дочернего процесса
-    push eax           ; Сохраняем PID дочернего процесса в стеке
-    mov eax, 7         ; Системный вызов sys_waitpid (7)
-    pop ebx            ; Восстанавливаем PID из стека в EBX
-    mov ecx, 0         ; Указатель на статус (NULL)
-    mov edx, 0         ; Опции (0)
-    int 0x80           ; Ждем завершения дочернего процесса
+    ; Родительский процесс - ждем завершения
+    push eax
+    mov eax, 7
+    pop ebx
+    mov ecx, 0
+    mov edx, 0
+    int 0x80
     
-    jmp main_loop      ; Возвращаемся к началу основного цикла
+    jmp main_loop
 
-.child_process:        ; Код дочернего процесса
-    ; Загружаем и выполняем программу с помощью execve()
-    mov eax, 11        ; Системный вызов sys_execve (11)
-    mov ebx, input     ; Указатель на строку с именем программы (первый аргумент)
-    mov ecx, 0         ; Аргументы командной строки (NULL)
-    mov edx, 0         ; Переменные окружения (NULL)
-    int 0x80           ; Заменяем текущий процесс новой программой
+.child_process:
+    ; Загружаем программу
+    mov eax, 11
+    mov ebx, input
+    mov ecx, 0
+    mov edx, 0
+    int 0x80
     
-    ; Если мы дошли сюда - execve() завершился с ошибкой
-    mov eax, 1         ; Системный вызов sys_exit (1)
-    mov ebx, 1         ; Код возврата 1 (ошибка)
-    int 0x80           ; Завершаем дочерний процесс с ошибкой
+    ; Если дошли сюда - ошибка
+    mov eax, 1
+    mov ebx, 1
+    int 0x80
 
-exit_program:          ; Выход из программы
-    mov eax, 1         ; Системный вызов sys_exit (1)
-    mov ebx, 0         ; Код возврата 0 (успех)
-    int 0x80           ; Завершаем программу
+exit_program:
+    mov eax, 1
+    mov ebx, 0
+    int 0x80
 
-segment readable writeable  ; Сегмент данных
-    prompt db "Введите команду: ", 0  ; Строка приглашения для ввода
-    prompt_len = $ - prompt           ; Длина строки приглашения
-    input rb 256                      ; Буфер для ввода (256 байт)
+segment readable writeable
+    prompt db "Введите команду: ", 0
+    prompt_len = $ - prompt
+    input rb 256

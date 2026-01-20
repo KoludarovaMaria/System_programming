@@ -1,187 +1,167 @@
-format ELF64            ; Указываем формат выходного файла - 64-битный ELF
-public _start           ; Объявляем точку входа публичной (для линкера)
+format ELF64
 
-; Объявление внешних функций из библиотеки ncurses
-extrn initscr           ; Инициализация библиотеки ncurses
-extrn start_color       ; Включение поддержки цветов
-extrn init_pair         ; Создание цветовых пар
-extrn getmaxx           ; Получение максимальной X координаты (ширина)
-extrn getmaxy           ; Получение максимальной Y координаты (высота)
-extrn raw               ; Включение "сырого" режима терминала
-extrn noecho            ; Отключение эха ввода
-extrn keypad            ; Включение расширенной обработки клавиатуры
-extrn stdscr            ; Указатель на стандартное окно
-extrn move              ; Перемещение курсора
-extrn getch             ; Получение символа с клавиатуры
-extrn addch             ; Добавление символа в текущую позицию
-extrn refresh           ; Обновление экрана
-extrn endwin            ; Завершение работы с ncurses
-extrn exit              ; Завершение программы
-extrn timeout           ; Установка таймаута для getch
-extrn usleep            ; Задержка в микросекундах
-extrn printw            ; Форматированный вывод строки
+public _start
 
-section '.bss' writable ; Секция неинициализированных данных
-    xmax dq 1           ; Максимальная X координата (ширина-1)
-    ymax dq 1           ; Максимальная Y координата (высота-1)
-    palette dq 1        ; Текущие атрибуты символа (цвет + символ)
-    delay dq ?          ; Задержка между шагами в микросекундах
+extrn initscr
+extrn start_color
+extrn init_pair
+extrn getmaxx
+extrn getmaxy
+extrn raw
+extrn noecho
+extrn keypad
+extrn stdscr
+extrn move
+extrn getch
+extrn addch
+extrn refresh
+extrn endwin
+extrn exit
+extrn timeout
+extrn usleep
+extrn printw
 
-section '.text' executable ; Секция исполняемого кода
-_start:                 ; Начало программы
-    call initscr        ; Инициализация библиотеки ncurses
-    
-    mov rdi, [stdscr]   ; Загрузка указателя на стандартное окно
-    call getmaxx        ; Получение ширины терминала
-    dec rax             ; Уменьшаем на 1 (координаты начинаются с 0)
-    mov [xmax], rax     ; Сохранение максимальной X координаты
-    
-    call getmaxy        ; Получение высоты терминала
-    dec rax             ; Уменьшаем на 1
-    mov [ymax], rax     ; Сохранение максимальной Y координаты
-    
-    call start_color    ; Включение поддержки цветов в ncurses
-    
-    ; Создание первой цветовой пары: MAGENTA на ЧЕРНОМ фоне
-    mov rdi, 1          ; Номер цветовой пары = 1
-    mov rsi, 5          ; Цвет текста: COLOR_MAGENTA (значение 5)
-    mov rdx, 0          ; Цвет фона: COLOR_BLACK (значение 0)
-    call init_pair      ; Создание цветовой пары
-    
-    ; Создание второй цветовой пары: WHITE на ЧЕРНОМ фоне
-    mov rdi, 2          ; Номер цветовой пары = 2
-    mov rsi, 0          ; Цвет текста: COLOR_WHITE (значение 0)
-    mov rdx, 0          ; Цвет фона: COLOR_BLACK (значение 0)
-    call init_pair      ; Создание цветовой пары
-    
-    call refresh        ; Первоначальное обновление экрана
-    call noecho         ; Отключение автоматического вывода набираемых символов
-    call raw            ; Включение "сырого" режима (отключение обработки сигналов)
-    
-    ; Установка начальных атрибутов символа
-    mov rax, ' '        ; Символ пробела (будет рисовать точку)
-    or rax, 0x100       ; Добавление атрибута: цветовая пара 1 (MAGENTA)
-                        ; 0x100 = маска для установки цветовой пары 1
-    mov [palette], rax  ; Сохранение атрибутов в переменной
+section '.bss' writable
+    xmax dq 1
+    ymax dq 1
+    palette dq 1
+    delay dq ?
 
-.begin:                 ; Начало основного цикла программы
+section '.text' executable
+_start:
+    call initscr
+    mov rdi, [stdscr]
+    call getmaxx
+    dec rax
+    mov [xmax], rax
+    call getmaxy
+    dec rax
+    mov [ymax], rax
+    call start_color
+    
+    ; COLOR_MAGENTA на ЧЕРНОМ фоне
+    mov rdi, 1
+    mov rsi, 5      ; COLOR_MAGENTA
+    mov rdx, 0      ; ЧЕРНЫЙ фон 
+    call init_pair
+    
+    ; WHITE на ЧЕРНОМ фоне  
+    mov rdi, 2
+    mov rsi, 0      ; WHITE
+    mov rdx, 0      ; ЧЕРНЫЙ фон
+    call init_pair
+    
+    call refresh
+    call noecho
+    call raw
+    
+    ; Начинаем с COLOR_MAGENTA (пара 1)
+    mov rax, ' '
+    or rax, 0x100   ; color pair 1 (COLOR_MAGENTA)
+    mov [palette], rax
 
-    mov rax, 0          
+.begin:
+    mov rax, [pass_count]
     and rax, 1
     jz .use_magenta
+.use_white:
+    mov rax, ' '
+    or rax, 0x200
+    mov [palette], rax
+    jmp .after_color_switch
+.use_magenta:
+    mov rax, ' '
+    or rax, 0x100
+    mov [palette], rax
+.after_color_switch:
     
-.use_white:             ; Использование белого цвета
-    mov rax, ' '        ; Символ пробела
-    or rax, 0x200       ; Цветовая пара 2 (WHITE) - 0x200
-    mov [palette], rax  ; Обновление атрибутов
-    jmp .after_color_switch ; Переход после смены цвета
-    
-.use_magenta:           ; Использование пурпурного цвета
-    mov rax, ' '        ; Символ пробела
-    or rax, 0x100       ; Цветовая пара 1 (MAGENTA) - 0x100
-    mov [palette], rax  ; Обновление атрибутов
-    
-.after_color_switch:    ; Продолжение после выбора цвета
-    
-    ; Установка начальных координат
-    mov r8, 0           ; r8 = X координата (горизонталь) = 0
-    mov r9, 0           ; r9 = Y координата (вертикаль) = 0
-    jmp .loop_to_right  ; Начало движения вправо
+    ; НАЧАЛО С ЛЕВОЙ СТОРОНЫ (x = 0)
+    mov r8, 0
+    mov r9, 0
+    jmp .loop_to_right  ; Сначала движение направо
 
-.to_down_left:          ; Перемещение по диагонали вниз-влево
-    inc r8              ; Увеличение X (движение вправо)
-    inc r9              ; Увеличение Y (движение вниз)
-    cmp r9, [ymax]      ; Сравнение с максимальной высотой
-    jg .begin           ; Если вышли за нижнюю границу - начать заново
-    ; Если не вышли - продолжить движение вправо
+.to_down_left:
+    inc r8
+    inc r9
+    cmp r9, [ymax]
+    jg .begin
 
 ; ДВИЖЕНИЕ НАПРАВО (слева направо)
 .loop_to_right:
-    mov rdi, [delay]    ; Загрузка значения задержки
-    call usleep         ; Пауза (задержка отрисовки)
-    
-    mov rdi, r9         ; Установка Y координаты (первый аргумент move)
-    mov rsi, r8         ; Установка X координаты (второй аргумент move)
-    push r8             ; Сохранение X координаты в стеке
-    push r9             ; Сохранение Y координаты в стеке
-    call move           ; Перемещение курсора в позицию (Y, X)
-    
-    mov rdi, [palette]  ; Загрузка символа с атрибутами цвета
-    call addch          ; Вывод символа в текущую позицию
-    call refresh        ; Обновление экрана для отображения изменений
-    
-    mov rdi, 1          ; Установка таймаута = 1 миллисекунда
-    call timeout        ; Установка неблокирующего режима для getch
-    call getch          ; Получение нажатой клавиши (не блокируется)
-    
-    cmp rax, 'y'        ; Проверка: нажата ли клавиша 'y'?
-    jne @f              ; Если нет - продолжить проверку
-    jmp .exit           ; Если да - завершить программу
-@@:                     ; Локальная метка (используется как временная)
-    cmp rax, 'k'        ; Проверка: нажата ли клавиша 'k'?
-    jne @f              ; Если нет - продолжить выполнение
-    cmp [delay], 2000   ; Сравнение текущей задержки с 2000 мкс
-    je .fast1           ; Если равна 2000 - переключить на быструю скорость
-    mov [delay], 2000   ; Установка медленной скорости (2000 мкс)
-    jmp @f              ; Продолжить выполнение
-.fast1:                 ; Переключение на быструю скорость
-    mov [delay], 1      ; Установка быстрой скорости (1 мкс)
-@@:                     ; Продолжение выполнения
-    pop r9              ; Восстановление Y координаты из стека
-    pop r8              ; Восстановление X координаты из стека
-    
-    inc r8              ; Увеличение X координаты (движение вправо)
-    cmp r8, [xmax]      ; Сравнение с максимальной X координатой
-    jg .to_down_right   ; Если достигли правого края - двигаться вниз
-    jmp .loop_to_right  ; Продолжить движение вправо
+    mov rdi, [delay]
+    call usleep
+    mov rdi, r9
+    mov rsi, r8
+    push r8
+    push r9
+    call move
+    mov rdi, [palette]
+    call addch
+    call refresh
+    mov rdi, 1
+    call timeout
+    call getch
+    cmp rax, 'y'    ; ВЫХОД на 'y'
+    jne @f
+    jmp .exit
+@@:
+    cmp rax, 'k'    ; ИЗМЕНЕНИЕ СКОРОСТИ на 'k'
+    jne @f
+    cmp [delay], 2000
+    je .fast1
+    mov [delay], 2000
+    jmp @f
+.fast1:
+    mov [delay], 1
+@@:
+    pop r9
+    pop r8
+    inc r8
+    cmp r8, [xmax]
+    jg .to_down_right  ; Достигли правого края - идем вниз
+    jmp .loop_to_right
 
-.to_down_right:         ; Перемещение по диагонали вниз-вправо
-    dec r8              ; Уменьшение X (движение влево)
-    inc r9              ; Увеличение Y (движение вниз)
-    cmp r9, [ymax]      ; Сравнение с максимальной высотой
-    jg .begin           ; Если вышли за нижнюю границу - начать заново
-    ; Если не вышли - начать движение влево
+.to_down_right:
+    dec r8
+    inc r9
+    cmp r9, [ymax]
+    jg .begin
 
 ; ДВИЖЕНИЕ НАЛЕВО (справа налево)
 .loop_to_left:
-    mov rdi, [delay]    ; Загрузка значения задержки
-    call usleep         ; Пауза
-    
-    mov rdi, r9         ; Установка Y координаты
-    mov rsi, r8         ; Установка X координаты
-    push r8             ; Сохранение X
-    push r9             ; Сохранение Y
-    call move           ; Перемещение курсора
-    
-    mov rdi, [palette]  ; Загрузка символа с атрибутами
-    call addch          ; Вывод символа
-    call refresh        ; Обновление экрана
-    
-    mov rdi, 1          ; Таймаут 1 мс
-    call timeout        ; Установка неблокирующего режима
-    call getch          ; Получение символа
-    
-    cmp rax, 'y'        ; Проверка на 'y' (выход)
-    jne @f              ; Если не 'y' - продолжить
-    jmp .exit           ; Если 'y' - выйти
+    mov rdi, [delay]
+    call usleep
+    mov rdi, r9
+    mov rsi, r8
+    push r8
+    push r9
+    call move
+    mov rdi, [palette]
+    call addch
+    call refresh
+    mov rdi, 1
+    call timeout
+    call getch
+    cmp rax, 'y'    ; ВЫХОД на 'y'
+    jne @f
+    jmp .exit
 @@:
-    cmp rax, 'k'        ; Проверка на 'k' (смена скорости)
-    jne @f              ; Если не 'k' - продолжить
-    cmp [delay], 2000   ; Сравнение с текущей задержкой
-    je .fast2           ; Если 2000 - переключить на быстро
-    mov [delay], 2000   ; Установить медленно (2000 мкс)
-    jmp @f              ; Продолжить
-.fast2:                 ; Переключение на быструю скорость
-    mov [delay], 1      ; Установить быстро (1 мкс)
+    cmp rax, 'k'    ; ИЗМЕНЕНИЕ СКОРОСТИ на 'k'
+    jne @f
+    cmp [delay], 2000
+    je .fast2
+    mov [delay], 2000
+    jmp @f
+.fast2:
+    mov [delay], 1
 @@:
-    pop r9              ; Восстановление Y
-    pop r8              ; Восстановление X
-    
-    dec r8              ; Уменьшение X координаты (движение влево)
-    cmp r8, 0           ; Сравнение с левой границей (X=0)
-    jl .to_down_left    ; Если достигли левого края - двигаться вниз
-    jmp .loop_to_left   ; Продолжить движение влево
+    pop r9
+    pop r8
+    dec r8
+    cmp r8, 0
+    jl .to_down_left  ; Достигли левого края - идем вниз
+    jmp .loop_to_left
 
-.exit:                  ; Выход из программы
-    call endwin         ; Завершение работы с ncurses
-    call exit           ; Завершение программы (системный вызов exit)
+.exit:
+    call endwin
+    call exit

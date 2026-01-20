@@ -1,23 +1,23 @@
-format ELF executable
+format ELF64 executable 3
 entry _start
 
 segment readable executable
 
 _start:
     ; Получаем PID для инициализации RNG и определения задачи
-    mov eax, 20
-    int 0x80
-    mov [rseed], eax
+    mov rax, 39          ; sys_getpid
+    syscall
+    mov [rseed], eax     ; Используем младшие 32 бита
     and eax, 3
     mov [task_id], eax
     
     ; Заполняем массив случайными числами
-    mov ecx, array_size
-    mov edi, numbers
+    mov rcx, array_size
+    mov rdi, numbers
 .fill_loop:
     call rand
-    mov [edi], eax
-    add edi, 4
+    mov [rdi], eax
+    add rdi, 4
     loop .fill_loop
     
     ; Выполняем задачу в соответствии с task_id
@@ -34,29 +34,29 @@ _start:
 task1:
     call find_most_frequent
     mov [result], eax
-    mov ecx, msg1
-    mov edx, msg1_len
+    mov rsi, msg1
+    mov rdx, msg1_len
     jmp output_result
 
 task2:
     call count_mult5
     mov [result], eax
-    mov ecx, msg2
-    mov edx, msg2_len
+    mov rsi, msg2
+    mov rdx, msg2_len
     jmp output_result
 
 task3:
     call quantile75
     mov [result], eax
-    mov ecx, msg3
-    mov edx, msg3_len
+    mov rsi, msg3
+    mov rdx, msg3_len
     jmp output_result
 
 task4:
     call fifth_after_min
     mov [result], eax
-    mov ecx, msg4
-    mov edx, msg4_len
+    mov rsi, msg4
+    mov rdx, msg4_len
 
 output_result:
     ; Сначала выводим сообщение
@@ -68,9 +68,9 @@ output_result:
     call print_nl
     
     ; Завершаем процесс
-    mov eax, 1
-    mov ebx, 0
-    int 0x80
+    mov rax, 60          ; sys_exit
+    xor rdi, rdi         ; exit code 0
+    syscall
 
 ; ========== ФУНКЦИИ ==========
 
@@ -85,16 +85,18 @@ rand:
     ret
 
 find_most_frequent:
-    mov ecx, 10
-    mov edi, digit_count
-    xor eax, eax
+    ; Обнуляем массив подсчета цифр
+    mov rcx, 10
+    mov rdi, digit_count
+    xor rax, rax
     rep stosd
     
-    mov ecx, array_size
-    mov esi, numbers
+    ; Подсчитываем цифры во всех числах
+    mov rcx, array_size
+    mov rsi, numbers
 .count_loop:
-    mov eax, [esi]
-    add esi, 4
+    mov eax, [rsi]
+    add rsi, 4
     test eax, eax
     jz .next_num
     
@@ -102,19 +104,20 @@ find_most_frequent:
     xor edx, edx
     mov ebx, 10
     div ebx
-    inc dword [digit_count + edx*4]
+    inc dword [digit_count + rdx*4]
     test eax, eax
     jnz .digit_loop
     
 .next_num:
     loop .count_loop
     
-    mov ecx, 9
+    ; Находим наиболее частую цифру
+    mov rcx, 9
     mov eax, 0
     mov ebx, [digit_count]
     
 .find_max:
-    mov edx, [digit_count + ecx*4]
+    mov edx, [digit_count + rcx*4]
     cmp edx, ebx
     jle .next
     mov ebx, edx
@@ -124,22 +127,22 @@ find_most_frequent:
     ret
 
 count_mult5:
-    mov ecx, array_size
-    mov esi, numbers
-    xor eax, eax
+    mov rcx, array_size
+    mov rsi, numbers
+    xor rax, rax
     
 .loop:
-    mov ebx, [esi]
-    add esi, 4
+    mov ebx, [rsi]
+    add rsi, 4
     test ebx, ebx
     jz .skip
     
-    push eax
+    push rax
     mov eax, ebx
     xor edx, edx
     mov ebx, 5
     div ebx
-    pop eax
+    pop rax
     test edx, edx
     jnz .skip
     
@@ -153,84 +156,84 @@ quantile75:
     mov eax, array_size
     mov ebx, 3
     mul ebx
-    shr eax, 2
-    mov esi, numbers
-    mov eax, [esi + eax*4]
+    shr rax, 2
+    mov rsi, numbers
+    mov eax, [rsi + rax*4]
     ret
 
 fifth_after_min:
     call sort_array
-    mov esi, numbers
-    mov eax, [esi + 5*4]
+    mov rsi, numbers
+    mov eax, [rsi + 5*4]
     ret
 
 sort_array:
-    mov ecx, array_size
-    dec ecx
+    mov rcx, array_size
+    dec rcx
     jle .done
     
 .outer:
-    push ecx
-    mov esi, numbers
-    xor edx, edx
+    push rcx
+    mov rsi, numbers
+    xor rdx, rdx
     
 .inner:
-    mov eax, [esi]
-    mov ebx, [esi+4]
+    mov eax, [rsi]
+    mov ebx, [rsi+4]
     cmp eax, ebx
     jle .no_swap
-    mov [esi], ebx
-    mov [esi+4], eax
-    mov edx, 1
+    mov [rsi], ebx
+    mov [rsi+4], eax
+    mov rdx, 1
 .no_swap:
-    add esi, 4
+    add rsi, 4
     loop .inner
     
-    pop ecx
-    test edx, edx
+    pop rcx
+    test rdx, rdx
     jz .done
     loop .outer
 .done:
     ret
 
 print_str:
-    mov eax, 4
-    mov ebx, 1
-    int 0x80
+    mov rax, 1          ; sys_write
+    mov rdi, 1          ; stdout
+    syscall
     ret
 
 print_number:
-    mov edi, num_buf + 11
-    mov byte [edi], 0
-    mov ebx, 10
+    mov rdi, num_buf + 11
+    mov byte [rdi], 0
+    mov rbx, 10
     
     test eax, eax
     jnz .convert
-    dec edi
-    mov byte [edi], '0'
+    dec rdi
+    mov byte [rdi], '0'
     jmp .print
     
 .convert:
     xor edx, edx
     div ebx
     add dl, '0'
-    dec edi
-    mov [edi], dl
+    dec rdi
+    mov [rdi], dl
     test eax, eax
     jnz .convert
     
 .print:
-    mov ecx, edi
-    mov edx, num_buf + 12
-    sub edx, ecx
-    mov eax, 4
-    mov ebx, 1
-    int 0x80
+    mov rsi, rdi
+    mov rdx, num_buf + 12
+    sub rdx, rsi
+    mov rax, 1          ; sys_write
+    mov rdi, 1          ; stdout
+    syscall
     ret
 
 print_nl:
-    mov ecx, nl
-    mov edx, 1
+    mov rsi, nl
+    mov rdx, 1
     call print_str
     ret
 
