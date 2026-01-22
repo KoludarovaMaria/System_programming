@@ -2,7 +2,6 @@
 #define QUEUE_H
 
 #include <stddef.h>
-#include <sys/mman.h>
 
 typedef struct {
     int *data;
@@ -12,10 +11,11 @@ typedef struct {
     size_t capacity;
 } Queue;
 
-// Инициализация очереди с анонимным отображением
-Queue* queue_init(size_t capacity);
-// Освобождение памяти
-void queue_free(Queue *q);
+// Инициализация очереди с анонимным отображением (ассемблер)
+Queue* queue_init_asm(size_t capacity);
+
+// Освобождение памяти (ассемблер)
+void queue_free_asm(Queue *q);
 
 // Ассемблерные функции
 extern void queue_enqueue_asm(Queue *q, int value);

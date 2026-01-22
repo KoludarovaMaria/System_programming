@@ -17,14 +17,16 @@ PROT_WRITE  = 0x2
 MAP_SHARED  = 0x01
 MAP_ANONY   = 0x20
 
-; Вариант 889
-COUNT       = 889          ; Исправлено: 889 чисел
+; Изменено: количество чисел с 889 на 8
+COUNT       = 8                  ; ИЗМЕНЕНО: было 889, стало 8 чисел
 ARRAY_SIZE  = 4 + (COUNT * 4)
 
 section '.data' writeable
-    msg_start       db "Массив из 889 чисел заполнен.", 10, 0
+    ; Изменено сообщение о заполнении
+    msg_start       db "Массив из 8 чисел заполнен.", 10, 0  ; ИЗМЕНЕНО: было 889
     msg_start_len   = $ - msg_start
 
+    ; Сообщения остаются без изменений
     msg_task0:
         db "[Процесс 1] 0.75 квантиль: ", 0
     len_0 = $ - msg_task0
@@ -46,7 +48,7 @@ section '.data' writeable
 
     array_ptr       dq 0
     data_ptr        dq 0
-    seed            dd 889        ; Инициализируем сид вариантом
+    seed            dd 15        ; Сид оставляем 889 для воспроизводимости
 
     num_buffer      rb 20
 
@@ -58,8 +60,8 @@ section '.text' executable
 _start:
     ; 1. Выделение памяти
     mov rax, SYS_MMAP
-    xor edi, edi               ; Адрес выбирает ОС
-    mov rsi, ARRAY_SIZE        ; Размер памяти
+    xor edi, edi
+    mov rsi, ARRAY_SIZE        ; Размер теперь для 8 чисел
     mov rdx, PROT_READ or PROT_WRITE
     mov r10, MAP_SHARED or MAP_ANONY
     mov r8, -1
@@ -74,14 +76,17 @@ _start:
     lea rbx, [rax + 4]
     mov [data_ptr], rbx
 
-    ; 2. Заполнение массива 889 случайными числами
+    ; 2. Заполнение массива 8 случайными числами (ИЗМЕНЕНО: было 889)
     mov rdi, [data_ptr]
-    mov rcx, COUNT
+    mov rcx, COUNT              ; RCX = 8
 fill_loop:
     call rand
     mov [rdi], eax
     add rdi, 4
     loop fill_loop
+
+    ; Вывод массива для проверки (ДОБАВЛЕНО: вывод самого массива)
+    call print_array           ; ДОБАВЛЕНО: выводим массив
 
     ; Сообщение о заполнении
     mov rax, SYS_WRITE
@@ -101,7 +106,7 @@ fork_loop:
 
     test rax, rax
     js exit_error
-    jz child_process           ; Ветка потомка
+    jz child_process
 
     inc r15
     jmp fork_loop
@@ -123,46 +128,45 @@ child_process:
 ; ==============================================
 task_quantile_75:
     ; Копируем массив в локальную память для сортировки
-    mov rdx, COUNT
-    shl rdx, 2                  ; rdx = COUNT * 4
+    mov rdx, COUNT              ; ИЗМЕНЕНО: теперь COUNT = 8
+    shl rdx, 2                  ; rdx = 8 * 4 = 32 байта
     sub rsp, rdx
-    and rsp, -16                ; Выравнивание стека
+    and rsp, -16
 
     mov rdi, rsp
     mov rsi, [data_ptr]
-    mov rcx, COUNT
+    mov rcx, COUNT              ; RCX = 8
     rep movsd
 
     ; Сортируем копию массива
     mov rdi, rsp
-    mov rcx, COUNT
+    mov rcx, COUNT              ; RCX = 8
     call bubble_sort
 
-    ; Вычисляем позицию 0.75 квантиля
-    ; Формула: position = 0.75 * (n - 1)
-    mov rax, COUNT
-    dec rax                     ; n - 1
-    mov rbx, 75                 ; Для умножения на 0.75 (75/100)
-    mul rbx                     ; rax = 75*(n-1)
+    ; Вычисляем позицию 0.75 квантиля для 8 чисел:
+    ; position = 0.75 * (8 - 1) = 0.75 * 7 = 5.25 ≈ 5 (после округления)
+    mov rax, COUNT              ; RAX = 8
+    dec rax                     ; RAX = 7
+    mov rbx, 75                 ; 0.75 = 75/100
+    mul rbx                     ; RAX = 7 * 75 = 525
     
-    ; Делим на 100
     mov rbx, 100
     xor rdx, rdx
-    div rbx                     ; rax = позиция, rdx = остаток
+    div rbx                     ; RAX = 5, RDX = 25
     
     ; Округляем вверх если остаток > 0
     test rdx, rdx
     jz .get_value
-    inc rax
+    inc rax                     ; RAX = 6 (если округляем вверх)
     
 .get_value:
     ; Получаем значение по индексу
-    mov ebx, [rsp + rax*4]
-    mov r14, rbx                ; Сохраняем результат
+    mov ebx, [rsp + rax*4]      ; Элемент с индексом RAX (5 или 6)
+    mov r14, rbx
 
     ; Освобождаем стек
-    mov rdx, COUNT
-    shl rdx, 2
+    mov rdx, COUNT              ; RDX = 8
+    shl rdx, 2                  ; RDX = 32
     add rsp, rdx
 
     call wait_my_turn
@@ -182,28 +186,25 @@ task_quantile_75:
 ; ==============================================
 task_multiples_of_five:
     mov rsi, [data_ptr]
-    mov rcx, COUNT
-    xor rbx, rbx                ; Счетчик
+    mov rcx, COUNT              ; RCX = 8
+    xor rbx, rbx
     
 .count_loop:
-    lodsd                       ; eax = текущее число
-    ; Проверяем кратность 5
+    lodsd
     test eax, eax
-    jz .is_multiple             ; 0 кратен любому числу
+    jz .is_multiple
     
-    ; Берем модуль числа
     mov edx, eax
     test edx, edx
     jns .positive
     neg edx
 .positive:
     
-    ; Делим на 5
     mov eax, edx
     xor edx, edx
     mov r8d, 5
     div r8d
-    test edx, edx               ; Проверяем остаток
+    test edx, edx
     jnz .next
 .is_multiple:
     inc rbx
@@ -229,17 +230,16 @@ task_multiples_of_five:
 ; ==============================================
 task_sum_digits_divisible_by_3:
     mov rsi, [data_ptr]
-    mov rcx, COUNT
-    xor rbx, rbx                ; Счетчик
+    mov rcx, COUNT              ; RCX = 8
+    xor rbx, rbx
     
 .scan:
     push rcx
     lodsd
-    call sum_of_digits          ; Получаем сумму цифр
+    call sum_of_digits
     test eax, eax
-    jz .divisible               ; 0 кратен 3
+    jz .divisible
     
-    ; Проверяем кратность 3
     xor edx, edx
     mov r8d, 3
     div r8d
@@ -272,12 +272,12 @@ task_most_frequent_digit:
     ; Выделяем память под счетчики цифр (10 чисел по 8 байт)
     sub rsp, 80
     mov rdi, rsp
-    call count_digits           ; Подсчитываем частоту цифр
+    call count_digits
 
     ; Ищем цифру с максимальной частотой
     mov rcx, 0
-    mov rbx, -1                 ; Максимальная частота
-    mov rdx, -1                 ; Цифра с максимальной частотой
+    mov rbx, -1
+    mov rdx, -1
     
 .find_max:
     cmp rcx, 10
@@ -292,7 +292,7 @@ task_most_frequent_digit:
     jmp .find_max
 
 .print_result:
-    mov r14, rdx                ; Сохраняем цифру
+    mov r14, rdx
     add rsp, 80
 
     call wait_my_turn
@@ -345,6 +345,54 @@ exit_error:
 ; ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 ; ==============================================
 
+; вывод массива чисел 
+print_array:
+    push rsi
+    push rcx
+    push rax
+    
+    ; Выводим заголовок
+    mov rax, SYS_WRITE
+    mov rdi, STDOUT
+    mov rsi, array_msg
+    mov rdx, array_msg_len
+    syscall
+    
+    ; Выводим все 8 чисел
+    mov rsi, [data_ptr]
+    mov rcx, COUNT              ; RCX = 8
+    
+.print_array_loop:
+    lodsd                       ; Загружаем число в EAX
+    push rsi                    ; Сохраняем RSI
+    push rcx                    ; Сохраняем RCX
+    
+    call print_num              ; Выводим число
+    
+    ; Выводим пробел после числа (кроме последнего)
+    pop rcx                     ; Восстанавливаем RCX
+    push rcx                    ; Сохраняем снова
+    cmp rcx, 1
+    je .no_space
+    mov rax, SYS_WRITE
+    mov rdi, STDOUT
+    mov rsi, space
+    mov rdx, 1
+    syscall
+.no_space:
+    
+    pop rcx                     ; Восстанавливаем RCX
+    pop rsi                     ; Восстанавливаем RSI
+    loop .print_array_loop
+    
+    ; Новая строка
+    call print_newline
+    
+    pop rax
+    pop rcx
+    pop rsi
+    ret
+
 ; Сортировка пузырьком
 bubble_sort:
     cmp rcx, 1
@@ -375,22 +423,21 @@ rand:
     imul edx
     add eax, 12345
     mov [seed], eax
-    ; Получаем число от 0 до 99999
     xor edx, edx
     mov ebx, 100000
     div ebx
-    mov eax, edx                ; Остаток - наше случайное число
+    mov eax, edx
     ret
 
 ; Подсчет суммы цифр числа
 sum_of_digits:
     push rbx
     push rcx
-    xor ebx, ebx                ; Сумма цифр
+    xor ebx, ebx
     mov ecx, eax
     test ecx, ecx
     jns .positive
-    neg ecx                     ; Берем модуль для отрицательных
+    neg ecx
 .positive:
 .calc_loop:
     test ecx, ecx
@@ -398,7 +445,7 @@ sum_of_digits:
     xor edx, edx
     mov eax, ecx
     mov r8d, 10
-    div r8d                     ; eax = частное, edx = цифра
+    div r8d
     add ebx, edx
     mov ecx, eax
     jmp .calc_loop
@@ -411,25 +458,23 @@ sum_of_digits:
 ; Подсчет частоты цифр во всех числах
 count_digits:
     push rdi
-    ; Обнуляем счетчики
     mov rcx, 10
     xor rax, rax
     rep stosq
-    pop rdi                     ; rdi теперь указывает на начало массива счетчиков
+    pop rdi
 
     mov rsi, [data_ptr]
-    mov rcx, COUNT
+    mov rcx, COUNT              ; RCX = 8
 .process_number:
     lodsd
     test eax, eax
     jz .process_zero
     
-    ; Для положительных чисел
     mov r8d, eax
     jmp .extract_digits
 
 .process_zero:
-    inc qword [rdi]             ; Цифра 0
+    inc qword [rdi]
     jmp .next_number
 
 .extract_digits:
@@ -438,7 +483,7 @@ count_digits:
     xor edx, edx
     mov eax, r8d
     mov r9d, 10
-    div r9d                     ; eax = частное, edx = цифра
+    div r9d
     mov r8d, eax
     inc qword [rdi + rdx*8]
     jmp .extract_digits
@@ -456,10 +501,9 @@ wait_my_turn:
     push rsi
 .check_turn:
     mov rbx, [array_ptr]
-    mov ecx, [rbx]              ; Текущий номер процесса, который может выводить
+    mov ecx, [rbx]
     cmp ecx, r15d
     je .can_print
-    ; Ждем немного
     mov rax, SYS_NANOSLEEP
     mov rdi, timespec
     xor rsi, rsi
@@ -477,7 +521,7 @@ wait_my_turn:
 pass_turn:
     push rbx
     mov rbx, [array_ptr]
-    lock inc dword [rbx]        ; Атомарное увеличение
+    lock inc dword [rbx]
     pop rbx
     ret
 
@@ -515,7 +559,6 @@ print_num:
     test rax, rax
     jnz .convert
     
-    ; Вывод строки
     mov rax, SYS_WRITE
     mov rdi, STDOUT
     lea rdx, [num_buffer + 19]
@@ -535,3 +578,8 @@ print_newline:
     mov rdx, 1
     syscall
     ret
+
+;НОВАЯ СЕКЦИЯ ДАННЫХ ДЛЯ ВЫВОДА МАССИВА
+section '.data' writeable
+    array_msg       db "Сгенерированный массив из 8 чисел: ", 0
+    array_msg_len   = $ - array_msg
