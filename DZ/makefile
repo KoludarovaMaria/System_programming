@@ -13,7 +13,7 @@ all: $(TARGET)
 
 # Сборка основной программы
 $(TARGET): $(OBJS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(OBJS) $(LDFLAGS) -o $@
 
 # Компиляция C файлов
 %.o: %.c
@@ -25,7 +25,7 @@ queue_asm.o: queue_asm.asm
 
 # Очистка
 clean:
-	rm -f $(TARGET) $(OBJS)
+	rm -f $(OBJS) $(TARGET)
 
 # Запуск
 run: $(TARGET)

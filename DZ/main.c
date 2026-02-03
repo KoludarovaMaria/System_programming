@@ -1,14 +1,14 @@
 #include "queue.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
+#include <sys/mman.h>
 
 int main() {
     printf("=== Демонстрация работы с очередью (анонимное отображение) ===\n");
     
-    // Инициализация очереди
+    // Инициализация очереди через ассемблер
     printf("1. Инициализация очереди...\n");
-    Queue *queue = queue_init(20);
+    Queue *queue = queue_init_asm(20);
     if (!queue) {
         printf("Ошибка инициализации очереди!\n");
         return 1;
@@ -17,7 +17,7 @@ int main() {
     printf("Состояние после инициализации: ");
     queue_print(queue);
     
-    printf("2. Заполнение очереди 10 числами\n");
+    printf("2. Заполнение очереди 10 случайными числами\n");
     queue_fill_random_asm(queue, 10);
     queue_print(queue);
     
@@ -52,15 +52,15 @@ int main() {
     size_t ends_with_1_count = queue_count_ends_with_1_asm(queue);
     printf("Количество чисел, оканчивающихся на 1: %zu\n", ends_with_1_count);
     
-    printf("9. Удаление всех четных чисел\n");
+    printf("9. Удаление всех четных чисел (нечетные возвращаются в конец)\n");
     printf("До удаления: ");
     queue_print(queue);
     queue_remove_even_asm(queue);
     printf("После удаления: ");
     queue_print(queue);
     
-    // Освобождение памяти
-    queue_free(queue);
+    // Освобождение памяти через ассемблер
+    queue_free_asm(queue);
     
     printf("\nВсе функции очереди работают корректно!\n");
     printf("Программа завершена успешно!\n");
