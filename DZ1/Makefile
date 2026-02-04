@@ -10,7 +10,7 @@ all: $(TARGET)
 $(TARGET): $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $(OBJECTS)
 
-queue.o: queue.asm
+queue.o: queue1.asm
 	$(FASM) $< $@
 
 main.o: main.c queue.h

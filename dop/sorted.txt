@@ -1,0 +1,488 @@
+format ELF64 executable
+entry start
+
+; Системные вызовы
+SYS_EXIT = 60
+SYS_WRITE = 1
+SYS_NANOSLEEP = 35
+SYS_CLOCK_GETTIME = 228
+SYS_FORK = 57
+
+; IPC для семафоров
+SYS_SEMGET = 64
+SYS_SEMCTL = 66
+SYS_SEMOP = 65
+
+; Флаги
+IPC_CREAT = 512
+IPC_RMID = 0
+SEM_UNDO = 0x1000
+
+STDOUT = 1
+CLOCK_REALTIME = 0
+NSEC_PER_SEC = 1000000000
+
+start:
+    ; Выводим приветствие
+    mov rdi, msg_start
+    call print_str
+    
+    ; Создаем семафоры (3 семафора)
+    ; sem 0 - доска (начальное значение = 1)
+    ; sem 1 - лампочка 1 (начальное значение = 0)
+    ; sem 2 - лампочка 2 (начальное значение = 0)
+    mov rax, SYS_SEMGET
+    mov rdi, 1234       ; key
+    mov rsi, 3          ; количество семафоров
+    mov rdx, IPC_CREAT or 0666
+    syscall
+    
+    cmp rax, 0
+    jl error_exit
+    mov [sem_id], rax
+    
+    ; Создаем процессы
+    call create_processes
+    
+    ; Ждем 10 секунд
+    mov rdi, 10
+    call sleep_seconds
+    
+    ; Устанавливаем флаг завершения
+    mov byte [exit_flag], 1
+    
+    ; Ждем 2 секунды для завершения
+    mov rdi, 2
+    call sleep_seconds
+    
+    ; Выводим результаты
+    call print_results
+    
+    ; Удаляем семафоры
+    mov rax, SYS_SEMCTL
+    mov rdi, [sem_id]
+    xor rsi, rsi
+    mov rdx, IPC_RMID
+    syscall
+    
+    ; Выход
+    xor rdi, rdi
+    mov rax, SYS_EXIT
+    syscall
+
+error_exit:
+    mov rdi, msg_error
+    call print_str
+    mov rdi, 1
+    mov rax, SYS_EXIT
+    syscall
+
+; rdi = секунды
+sleep_seconds:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 32
+    
+    mov [rsp], rdi      ; tv_sec
+    mov qword [rsp + 8], 0  ; tv_nsec
+    
+    mov rax, SYS_NANOSLEEP
+    mov rdi, rsp
+    xor rsi, rsi
+    syscall
+    
+    mov rsp, rbp
+    pop rbp
+    ret
+
+random_delay:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 32
+    
+    ; Получаем время
+    mov rax, SYS_CLOCK_GETTIME
+    mov rdi, CLOCK_REALTIME
+    lea rsi, [rsp + 16]
+    syscall
+    
+    ; Используем наносекунды для случайности
+    mov rax, [rsp + 24]
+    and rax, 0x3FF
+    
+    ; Задержка от 100 до 1100 мс
+    imul rax, 1000000
+    add rax, 100000000
+    
+    mov rcx, NSEC_PER_SEC
+    xor rdx, rdx
+    div rcx
+    
+    mov [rsp], rax
+    mov [rsp + 8], rdx
+    
+    mov rax, SYS_NANOSLEEP
+    mov rdi, rsp
+    xor rsi, rsi
+    syscall
+    
+    mov rsp, rbp
+    pop rbp
+    ret
+
+; rdi = номер семафора, rsi = операция
+sem_op:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 16
+    
+    mov [rsp], di
+    mov [rsp + 2], si
+    mov word [rsp + 4], SEM_UNDO
+    
+    mov rax, SYS_SEMOP
+    mov rdi, [sem_id]
+    mov rsi, rsp
+    mov rdx, 1
+    syscall
+    
+    mov rsp, rbp
+    pop rbp
+    ret
+
+create_processes:
+    ; Лампочка 1
+    mov rax, SYS_FORK
+    syscall
+    test rax, rax
+    jz lamp1_process
+    mov [pid_lamp1], rax
+    
+    ; Лампочка 2
+    mov rax, SYS_FORK
+    syscall
+    test rax, rax
+    jz lamp2_process
+    mov [pid_lamp2], rax
+    
+    ; Человек A1
+    mov rax, SYS_FORK
+    syscall
+    test rax, rax
+    jz person1_process
+    mov [pid_person1], rax
+    
+    ; Человек A2
+    mov rax, SYS_FORK
+    syscall
+    test rax, rax
+    jz person2_process
+    mov [pid_person2], rax
+    
+    ret
+
+lamp1_process:
+.loop:
+    cmp byte [exit_flag], 1
+    je .exit
+    
+    call random_delay
+    
+    ; Увеличиваем счетчик лампочки 1
+    lock inc qword [lamp1_count]
+    
+    ; Выводим сообщение
+    mov rdi, msg_lamp1_on
+    call print_str
+    
+    ; Сигнализируем
+    mov rdi, 1
+    mov rsi, 1
+    call sem_op
+    
+    jmp .loop
+.exit:
+    xor rdi, rdi
+    mov rax, SYS_EXIT
+    syscall
+
+lamp2_process:
+.loop:
+    cmp byte [exit_flag], 1
+    je .exit
+    
+    call random_delay
+    
+    lock inc qword [lamp2_count]
+    
+    mov rdi, msg_lamp2_on
+    call print_str
+    
+    mov rdi, 2
+    mov rsi, 1
+    call sem_op
+    
+    jmp .loop
+.exit:
+    xor rdi, rdi
+    mov rax, SYS_EXIT
+    syscall
+
+person1_process:
+.loop:
+    cmp byte [exit_flag], 1
+    je .exit
+    
+    ; Ждем лампочку 1
+    mov rdi, 1
+    mov rsi, -1
+    call sem_op
+    
+    ; Блокируем доску
+    mov rdi, 0
+    mov rsi, -1
+    call sem_op
+    
+    ; Читаем доску
+    mov rax, [board]
+    
+    ; Выводим
+    push rax
+    mov rdi, msg_a1_sees
+    call print_str
+    pop rax
+    mov rdi, rax
+    call print_num
+    mov rdi, newline
+    call print_str
+    
+    ; Имитируем выключение (0.5 сек)
+    mov rdi, 1
+    shr rdi, 1
+    call sleep_seconds
+    
+    ; Обновляем доску
+    inc rax
+    mov [board], rax
+    
+    ; Выводим
+    push rax
+    mov rdi, msg_a1_writes
+    call print_str
+    pop rax
+    mov rdi, rax
+    call print_num
+    mov rdi, newline
+    call print_str
+    mov rdi, newline
+    call print_str
+    
+    ; Разблокируем доску
+    mov rdi, 0
+    mov rsi, 1
+    call sem_op
+    
+    jmp .loop
+.exit:
+    xor rdi, rdi
+    mov rax, SYS_EXIT
+    syscall
+
+person2_process:
+.loop:
+    cmp byte [exit_flag], 1
+    je .exit
+    
+    ; Ждем лампочку 2
+    mov rdi, 2
+    mov rsi, -1
+    call sem_op
+    
+    ; Блокируем доску
+    mov rdi, 0
+    mov rsi, -1
+    call sem_op
+    
+    ; Читаем доску
+    mov rax, [board]
+    
+    ; Выводим
+    push rax
+    mov rdi, msg_a2_sees
+    call print_str
+    pop rax
+    mov rdi, rax
+    call print_num
+    mov rdi, newline
+    call print_str
+    
+    ; Имитируем выключение (0.5 сек)
+    mov rdi, 1
+    shr rdi, 1
+    call sleep_seconds
+    
+    ; Обновляем доску
+    inc rax
+    mov [board], rax
+    
+    ; Выводим
+    push rax
+    mov rdi, msg_a2_writes
+    call print_str
+    pop rax
+    mov rdi, rax
+    call print_num
+    mov rdi, newline
+    call print_str
+    mov rdi, newline
+    call print_str
+    
+    ; Разблокируем доску
+    mov rdi, 0
+    mov rsi, 1
+    call sem_op
+    
+    jmp .loop
+.exit:
+    xor rdi, rdi
+    mov rax, SYS_EXIT
+    syscall
+
+print_str:
+    push rbp
+    mov rbp, rsp
+    
+    mov rsi, rdi
+    xor rdx, rdx
+.find_len:
+    cmp byte [rsi + rdx], 0
+    je .print
+    inc rdx
+    jmp .find_len
+    
+.print:
+    mov rax, SYS_WRITE
+    mov rdi, STDOUT
+    syscall
+    
+    mov rsp, rbp
+    pop rbp
+    ret
+
+print_num:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 32
+    
+    mov rax, rdi
+    mov rbx, 10
+    lea rcx, [rsp + 31]
+    mov byte [rcx], 0
+    
+.convert:
+    dec rcx
+    xor rdx, rdx
+    div rbx
+    add dl, '0'
+    mov [rcx], dl
+    test rax, rax
+    jnz .convert
+    
+    mov rsi, rcx
+    mov rdx, 31
+    sub rdx, rcx
+    add rdx, rsp
+    mov rax, SYS_WRITE
+    mov rdi, STDOUT
+    syscall
+    
+    mov rsp, rbp
+    pop rbp
+    ret
+
+print_results:
+    ; Заголовок
+    mov rdi, msg_results
+    call print_str
+    
+    ; Доска
+    mov rdi, msg_board_value
+    call print_str
+    mov rdi, [board]
+    call print_num
+    mov rdi, newline
+    call print_str
+    
+    ; Лампочка 1
+    mov rdi, msg_lamp1_count
+    call print_str
+    mov rdi, [lamp1_count]
+    call print_num
+    mov rdi, newline
+    call print_str
+    
+    ; Лампочка 2
+    mov rdi, msg_lamp2_count
+    call print_str
+    mov rdi, [lamp2_count]
+    call print_num
+    mov rdi, newline
+    call print_str
+    
+    ; Сумма
+    mov rdi, msg_total_count
+    call print_str
+    mov rax, [lamp1_count]
+    add rax, [lamp2_count]
+    mov rdi, rax
+    call print_num
+    mov rdi, newline
+    call print_str
+    
+    ; Проверка
+    mov rdi, msg_check
+    call print_str
+    
+    mov rax, [board]
+    mov rbx, [lamp1_count]
+    add rbx, [lamp2_count]
+    cmp rax, rbx
+    jne .error
+    
+    mov rdi, msg_success
+    call print_str
+    ret
+    
+.error:
+    mov rdi, msg_failure
+    call print_str
+    ret
+
+; Данные
+sem_id: dq 0
+board: dq 0
+lamp1_count: dq 0
+lamp2_count: dq 0
+pid_lamp1: dq 0
+pid_lamp2: dq 0
+pid_person1: dq 0
+pid_person2: dq 0
+exit_flag: db 0
+
+msg_start: db 'Программа "Лампочки и люди"', 10, 'Работаем 10 секунд...', 10, 10, 0
+msg_error: db 'Ошибка!', 10, 0
+msg_lamp1_on: db 'Лампочка 1 загорелась', 10, 0
+msg_lamp2_on: db 'Лампочка 2 загорелась', 10, 0
+msg_a1_sees: db 'A1 видит: ', 0
+msg_a1_writes: db 'A1 записывает: ', 0
+msg_a2_sees: db 'A2 видит: ', 0
+msg_a2_writes: db 'A2 записывает: ', 0
+msg_results: db 10, 'Результаты:', 10, 0
+msg_board_value: db 'На доске: ', 0
+msg_lamp1_count: db 'Лампочка 1: ', 0
+msg_lamp2_count: db 'Лампочка 2: ', 0
+msg_total_count: db 'Всего вспышек: ', 0
+msg_check: db 'Проверка: ', 0
+msg_success: db 'Успех! Значения совпадают', 10, 0
+msg_failure: db 'Ошибка! Значения не совпадают', 10, 0
+newline: db 10, 0
