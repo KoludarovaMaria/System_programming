@@ -27,9 +27,18 @@ segment readable writeable
     board_number     dq 0
     
     ; Семафоры
-    board_lock       dd 0      ; Мьютекс для доски
-    lamp1_sem        dd 0      ; Семафор лампочки 1
-    lamp2_sem        dd 0      ; Семафор лампочки 2
+    board_sem        dd 1      ; Семафор для доски (1 - доступна)
+    
+    ; Счетчики для лампочек
+    lamp1_flash      dd 0      ; Счетчик вспышек L1
+    lamp2_flash      dd 0      ; Счетчик вспышек L2
+    
+    ; Переменные для запоминания чисел
+    remembered_a1    dq 0      ; Что запомнил A1
+    remembered_a2    dq 0      ; Что запомнил A2
+    
+    ; Для отладки - запоминаем кто последний читал
+    last_reader      db 0      ; 1 = A1, 2 = A2
     
     ; Счетчики
     flashes_created  dq 0      ; Сколько вспышек создано
@@ -46,32 +55,37 @@ segment readable writeable
     buffer           rb 256
     
     ; Сообщения
-    header           db 'Лампочки и доска - с отображением зажигания',10
+    header           db '=== Lamps and Board Simulation ===',10
+                     db 'Two people (A1 and A2) observe lamps L1 and L2',10
+                     db 'Each lamp flash: read board -> turn off -> write board+1',10,10
     header_len       = $ - header
     
-    board_msg        db 'Доска: '
+    board_msg        db 'Board: '
     board_msg_len    = $ - board_msg
     
-    created_msg      db '  Создано: '
+    created_msg      db '  Created: '
     created_msg_len  = $ - created_msg
     
-    processed_msg    db '  Обработано: '
+    processed_msg    db '  Processed: '
     processed_msg_len = $ - processed_msg
     
-    lamp1_flash_msg  db '[L1]',0
-    lamp1_flash_len  = 4
-    lamp2_flash_msg  db '[L2]',0
-    lamp2_flash_len  = 4
+    lamp1_flash_msg  db '[L1 FLASH!]',0
+    lamp1_flash_len  = 11
+    lamp2_flash_msg  db '[L2 FLASH!]',0
+    lamp2_flash_len  = 11
     
-    final_msg        db '=== РЕЗУЛЬТАТ ===',10
+    final_msg        db 10,'=== FINAL RESULT ===',10
     final_msg_len    = $ - final_msg
     
-    success_msg      db 'УСПЕХ: Все 20 вспышек учтены!',10
+    success_msg      db 'SUCCESS: All 20 flashes correctly counted!',10
     success_msg_len  = $ - success_msg
     
-    fail_msg         db 'ОШИБКА: Доска показывает ',0
-    fail_msg2        db ', а должно быть 20',10
+    fail_msg         db 'ERROR: Board shows ',0
+    fail_msg2        db ', should be 20',10
     fail_msg2_len    = $ - fail_msg2
+    
+    dash_line        db '----------------------------------------',10
+    dash_len         = $ - dash_line
     
     newline          db 10
     
@@ -120,6 +134,9 @@ start:
     
     ; Главный поток - создаем ровно 20 вспышек
     mov     r15, TOTAL_FLASHES
+    mov     rdi, dash_line
+    mov     rsi, dash_len
+    call    print_string
 
 create_flashes:
     ; Случайно выбираем лампочку
@@ -130,44 +147,20 @@ create_flashes:
 flash_lamp2:
     ; Вспышка L2
     mov     byte [current_lamp], 2  ; Устанавливаем флаг лампочки 2
-    
-    ; Вспышка L2 - увеличиваем семафор
-    mov     eax, 1
-    lock xadd [lamp2_sem], eax
-    
-    ; Будим поток A2
-    mov     edi, lamp2_sem
-    mov     esi, FUTEX_WAKE or FUTEX_PRIVATE
-    mov     edx, 1
-    xor     r10, r10
-    xor     r8, r8
-    mov     eax, SYS_futex
-    syscall
+    lock inc dword [lamp2_flash]    ; Увеличиваем счетчик вспышек L2
     jmp     flash_done
 
 flash_lamp1:
     ; Вспышка L1
     mov     byte [current_lamp], 1  ; Устанавливаем флаг лампочки 1
-    
-    ; Вспышка L1 - увеличиваем семафор
-    mov     eax, 1
-    lock xadd [lamp1_sem], eax
-    
-    ; Будим поток A1
-    mov     edi, lamp1_sem
-    mov     esi, FUTEX_WAKE or FUTEX_PRIVATE
-    mov     edx, 1
-    xor     r10, r10
-    xor     r8, r8
-    mov     eax, SYS_futex
-    syscall
+    lock inc dword [lamp1_flash]    ; Увеличиваем счетчик вспышек L1
 
 flash_done:
     ; Увеличиваем счетчик созданных вспышек
     lock inc qword [flashes_created]
     
     ; Показываем состояние с информацией о лампочке
-    call    show_status_with_lamp
+    call    show_flash_status
     
     ; Пауза между вспышками
     call    random_delay
@@ -177,7 +170,11 @@ flash_done:
     
     ; Все 20 вспышек созданы
     ; Ждем пока ВСЕ будут обработаны
-    mov     r14, 1000          ; Максимум 1000 попыток
+    mov     rdi, dash_line
+    mov     rsi, dash_len
+    call    print_string
+    
+    mov     r14, 2000          ; Максимум 2000 попыток
 
 wait_loop:
     mov     rax, [flashes_created]
@@ -186,7 +183,7 @@ wait_loop:
     je      all_processed
     
     ; Короткая пауза
-    mov     rdi, 10000000      ; 10ms
+    mov     rdi, 5000000       ; 5ms
     call    delay_ns
     
     dec     r14
@@ -199,29 +196,8 @@ all_processed:
     ; Все обработано, останавливаем потоки
     mov     dword [stop_threads], 1
     
-    ; Будим потоки чтобы они вышли из ожидания
-    mov     eax, 1
-    lock xadd [lamp1_sem], eax
-    mov     edi, lamp1_sem
-    mov     esi, FUTEX_WAKE or FUTEX_PRIVATE
-    mov     edx, 1
-    xor     r10, r10
-    xor     r8, r8
-    mov     eax, SYS_futex
-    syscall
-    
-    mov     eax, 1
-    lock xadd [lamp2_sem], eax
-    mov     edi, lamp2_sem
-    mov     esi, FUTEX_WAKE or FUTEX_PRIVATE
-    mov     edx, 1
-    xor     r10, r10
-    xor     r8, r8
-    mov     eax, SYS_futex
-    syscall
-    
-    ; Ждем завершения потоков
-    mov     rdi, 200000000     ; 200ms
+    ; Даем время потокам завершиться
+    mov     rdi, 100000000     ; 100ms
     call    delay_ns
     
     ; Вывод результата
@@ -237,7 +213,7 @@ all_processed:
     
     mov     rdi, buffer
     
-    ; "Доска: "
+    ; "Board: "
     mov     rsi, board_msg
     mov     rcx, board_msg_len
     rep movsb
@@ -249,13 +225,49 @@ all_processed:
     mov     al, 10
     stosb
     
-    ; "Создано: "
+    ; "Created: "
     mov     rsi, created_msg
     mov     rcx, created_msg_len
     rep movsb
     
     ; Количество созданных вспышек
     mov     rax, [flashes_created]
+    call    num_to_str
+    
+    mov     al, 10
+    stosb
+    
+    ; "Processed: "
+    mov     rsi, processed_msg
+    mov     rcx, processed_msg_len
+    rep movsb
+    
+    ; Количество обработанных вспышек
+    mov     rax, [flashes_processed]
+    call    num_to_str
+    
+    mov     al, 10
+    stosb
+    
+    ; "L1 flashes: "
+    mov     rsi, .l1_msg
+    mov     rcx, .l1_msg_len
+    rep movsb
+    
+    ; Количество вспышек L1
+    mov     eax, [lamp1_flash]
+    call    num_to_str
+    
+    mov     al, 10
+    stosb
+    
+    ; "L2 flashes: "
+    mov     rsi, .l2_msg
+    mov     rcx, .l2_msg_len
+    rep movsb
+    
+    ; Количество вспышек L2
+    mov     eax, [lamp2_flash]
     call    num_to_str
     
     mov     al, 10
@@ -275,12 +287,11 @@ all_processed:
     cmp     rax, TOTAL_FLASHES
     je      success
     
-    ; Ошибка - показываем какое число на доске
+    ; Ошибка
     mov     rdi, fail_msg
-    mov     rsi, 24
+    mov     rsi, 19
     call    print_string
     
-    ; Число с доски
     mov     rdi, buffer
     mov     rcx, 256
     xor     al, al
@@ -297,38 +308,20 @@ all_processed:
     mov     rdi, buffer
     call    print_string
     
-    ; Вторая часть сообщения
     mov     rdi, fail_msg2
     mov     rsi, fail_msg2_len
     call    print_string
     
     jmp     exit
 
+.l1_msg      db 'L1 flashes pending: '
+.l1_msg_len  = $ - .l1_msg
+.l2_msg      db 'L2 flashes pending: '
+.l2_msg_len  = $ - .l2_msg
+
 force_stop:
     ; Принудительная остановка
     mov     dword [stop_threads], 1
-    mov     dword [program_active], 0
-    
-    ; Будим потоки
-    mov     eax, 1
-    lock xadd [lamp1_sem], eax
-    mov     edi, lamp1_sem
-    mov     esi, FUTEX_WAKE or FUTEX_PRIVATE
-    mov     edx, 1
-    xor     r10, r10
-    xor     r8, r8
-    mov     eax, SYS_futex
-    syscall
-    
-    mov     eax, 1
-    lock xadd [lamp2_sem], eax
-    mov     edi, lamp2_sem
-    mov     esi, FUTEX_WAKE or FUTEX_PRIVATE
-    mov     edx, 1
-    xor     r10, r10
-    xor     r8, r8
-    mov     eax, SYS_futex
-    syscall
     
     jmp     exit
 
@@ -349,73 +342,58 @@ exit:
 person_a1:
 a1_loop:
     ; Проверяем флаг остановки
-    mov     eax, [stop_threads]
-    test    eax, eax
-    jnz     a1_exit
+    cmp     dword [stop_threads], 0
+    jne     a1_exit
     
-    ; Ждем вспышку L1
-a1_wait:
-    ; Проверяем флаг остановки
-    mov     eax, [stop_threads]
-    test    eax, eax
-    jnz     a1_exit
+    ; Проверяем, была ли вспышка L1
+    cmp     dword [lamp1_flash], 0
+    je      a1_no_flash
     
-    ; Пытаемся взять семафор
-    mov     eax, -1
-    lock xadd [lamp1_sem], eax
-    mov     ebx, eax          ; Старое значение
+    ; Была вспышка - начинаем обработку
     
-    ; Если было <= 0, то ждем
-    cmp     ebx, 0
-    jle     a1_sleep
+    ; 1. Берем семафор доски (ждем доступа)
+    call    wait_board_sem
     
-    ; Семафор был > 0, обрабатываем
-    jmp     a1_process
-
-a1_sleep:
-    ; Восстанавливаем семафор
-    lock inc dword [lamp1_sem]
-    
-    ; Еще раз проверяем флаг
-    mov     eax, [stop_threads]
-    test    eax, eax
-    jnz     a1_exit
-    
-    ; Ожидание
-    mov     edi, lamp1_sem
-    mov     esi, FUTEX_WAIT or FUTEX_PRIVATE
-    mov     edx, ebx
-    xor     r10, r10
-    xor     r8, r8
-    mov     eax, SYS_futex
-    syscall
-    jmp     a1_wait
-
-a1_process:
-    ; КРИТИЧЕСКАЯ СЕКЦИЯ
-    call    lock_board
-    
-    ; Читаем текущее значение
+    ; 2. Читаем число с доски и запоминаем
     mov     rax, [board_number]
+    mov     [remembered_a1], rax
+    mov     byte [last_reader], 1  ; Отмечаем что A1 читал
     
-    ; Задержка внутри критической секции
-    push    rax
-    call    short_delay
-    pop     rax
+    ; 3. Показываем что прочитали
+    call    show_read_status
     
-    ; Увеличиваем и записываем
+    ; 4. Освобождаем семафор доски
+    call    signal_board_sem
+    
+    ; 5. Имитация "выключения лампочки" - задержка
+    call    random_delay_short
+    
+    ; 6. Снова берем семафор доски
+    call    wait_board_sem
+    
+    ; 7. Записываем новое значение (запомненное + 1)
+    mov     rax, [remembered_a1]
     inc     rax
     mov     [board_number], rax
     
-    ; Увеличиваем счетчик обработанных
+    ; 8. Уменьшаем счетчик вспышек L1
+    lock dec dword [lamp1_flash]
+    
+    ; 9. Увеличиваем счетчик обработанных вспышек
     lock inc qword [flashes_processed]
     
-    ; Показываем, что лампочка 1 обработана
-    call    show_processing_status
-    mov     byte [current_lamp], 0  ; Сбрасываем флаг
+    ; 10. Показываем статус записи
+    call    show_write_status
     
-    call    unlock_board
+    ; 11. Освобождаем семафор доски
+    call    signal_board_sem
     
+    jmp     a1_loop
+
+a1_no_flash:
+    ; Нет вспышек - небольшая пауза перед следующей проверкой
+    mov     rdi, 500000        ; 0.5ms
+    call    delay_ns
     jmp     a1_loop
 
 a1_exit:
@@ -429,73 +407,58 @@ a1_exit:
 person_a2:
 a2_loop:
     ; Проверяем флаг остановки
-    mov     eax, [stop_threads]
-    test    eax, eax
-    jnz     a2_exit
+    cmp     dword [stop_threads], 0
+    jne     a2_exit
     
-    ; Ждем вспышку L2
-a2_wait:
-    ; Проверяем флаг остановки
-    mov     eax, [stop_threads]
-    test    eax, eax
-    jnz     a2_exit
+    ; Проверяем, была ли вспышка L2
+    cmp     dword [lamp2_flash], 0
+    je      a2_no_flash
     
-    ; Пытаемся взять семафор
-    mov     eax, -1
-    lock xadd [lamp2_sem], eax
-    mov     ebx, eax          ; Старое значение
+    ; Была вспышка - начинаем обработку
     
-    ; Если было <= 0, то ждем
-    cmp     ebx, 0
-    jle     a2_sleep
+    ; 1. Берем семафор доски (ждем доступа)
+    call    wait_board_sem
     
-    ; Семафор был > 0, обрабатываем
-    jmp     a2_process
-
-a2_sleep:
-    ; Восстанавливаем семафор
-    lock inc dword [lamp2_sem]
-    
-    ; Еще раз проверяем флаг
-    mov     eax, [stop_threads]
-    test    eax, eax
-    jnz     a2_exit
-    
-    ; Ожидание
-    mov     edi, lamp2_sem
-    mov     esi, FUTEX_WAIT or FUTEX_PRIVATE
-    mov     edx, ebx
-    xor     r10, r10
-    xor     r8, r8
-    mov     eax, SYS_futex
-    syscall
-    jmp     a2_wait
-
-a2_process:
-    ; КРИТИЧЕСКАЯ СЕКЦИЯ
-    call    lock_board
-    
-    ; Читаем текущее значение
+    ; 2. Читаем число с доски и запоминаем
     mov     rax, [board_number]
+    mov     [remembered_a2], rax
+    mov     byte [last_reader], 2  ; Отмечаем что A2 читал
     
-    ; Задержка внутри критической секции
-    push    rax
-    call    short_delay
-    pop     rax
+    ; 3. Показываем что прочитали
+    call    show_read_status
     
-    ; Увеличиваем и записываем
+    ; 4. Освобождаем семафор доски
+    call    signal_board_sem
+    
+    ; 5. Имитация "выключения лампочки" - задержка
+    call    random_delay_short
+    
+    ; 6. Снова берем семафор доски
+    call    wait_board_sem
+    
+    ; 7. Записываем новое значение (запомненное + 1)
+    mov     rax, [remembered_a2]
     inc     rax
     mov     [board_number], rax
     
-    ; Увеличиваем счетчик обработанных
+    ; 8. Уменьшаем счетчик вспышек L2
+    lock dec dword [lamp2_flash]
+    
+    ; 9. Увеличиваем счетчик обработанных вспышек
     lock inc qword [flashes_processed]
     
-    ; Показываем, что лампочка 2 обработана
-    call    show_processing_status
-    mov     byte [current_lamp], 0  ; Сбрасываем флаг
+    ; 10. Показываем статус записи
+    call    show_write_status
     
-    call    unlock_board
+    ; 11. Освобождаем семафор доски
+    call    signal_board_sem
     
+    jmp     a2_loop
+
+a2_no_flash:
+    ; Нет вспышек - небольшая пауза перед следующей проверкой
+    mov     rdi, 500000        ; 0.5ms
+    call    delay_ns
     jmp     a2_loop
 
 a2_exit:
@@ -504,12 +467,59 @@ a2_exit:
     syscall
 
 ; ==============================================
-; Вывод состояния с информацией о лампочке
+; Семафор для доски - ожидание
 ; ==============================================
-show_status_with_lamp:
+wait_board_sem:
+wait_sem_retry:
+    ; Пытаемся уменьшить семафор с 1 до 0
+    mov     eax, -1
+    lock xadd [board_sem], eax
+    mov     ebx, eax          ; Старое значение
+    
+    ; Если было > 0, доступ получен
+    cmp     ebx, 0
+    jg      sem_acquired
+    
+    ; Если было <= 0, ждем
+    lock inc dword [board_sem]  ; Восстанавливаем
+    
+    ; Ожидание
+    mov     edi, board_sem
+    mov     esi, FUTEX_WAIT or FUTEX_PRIVATE
+    mov     edx, ebx
+    xor     r10, r10
+    xor     r8, r8
+    mov     eax, SYS_futex
+    syscall
+    
+    jmp     wait_sem_retry
+
+sem_acquired:
+    ret
+
+; ==============================================
+; Семафор для доски - освобождение
+; ==============================================
+signal_board_sem:
+    ; Увеличиваем семафор
+    lock inc dword [board_sem]
+    
+    ; Будим одного ждущего
+    mov     edi, board_sem
+    mov     esi, FUTEX_WAKE or FUTEX_PRIVATE
+    mov     edx, 1
+    xor     r10, r10
+    xor     r8, r8
+    mov     eax, SYS_futex
+    syscall
+    ret
+
+; ==============================================
+; Показать статус вспышки
+; ==============================================
+show_flash_status:
     push    r15
     push    r14
-    push    r13
     
     ; Очищаем буфер
     mov     rdi, buffer
@@ -526,27 +536,26 @@ show_status_with_lamp:
     je      .lamp1
     cmp     al, 2
     je      .lamp2
-    jmp     .no_lamp
+    jmp     .done
     
 .lamp1:
-    ; "[L1] "
+    ; "[L1 FLASH!] "
     mov     rsi, lamp1_flash_msg
     mov     rcx, lamp1_flash_len
     rep movsb
-    mov     al, ' '
-    stosb
     jmp     .add_status
     
 .lamp2:
-    ; "[L2] "
+    ; "[L2 FLASH!] "
     mov     rsi, lamp2_flash_msg
     mov     rcx, lamp2_flash_len
     rep movsb
-    mov     al, ' '
-    stosb
 
 .add_status:
-    ; "Доска: "
+    mov     al, ' '
+    stosb
+    
+    ; "Board: "
     mov     rsi, board_msg
     mov     rcx, board_msg_len
     rep movsb
@@ -555,7 +564,7 @@ show_status_with_lamp:
     mov     rax, [board_number]
     call    num_to_str
     
-    ; "  Создано: "
+    ; "  Created: "
     mov     rsi, created_msg
     mov     rcx, created_msg_len
     rep movsb
@@ -564,7 +573,7 @@ show_status_with_lamp:
     mov     rax, [flashes_created]
     call    num_to_str
     
-    ; "  Обработано: "
+    ; "  Processed: "
     mov     rsi, processed_msg
     mov     rcx, processed_msg_len
     rep movsb
@@ -577,6 +586,7 @@ show_status_with_lamp:
     mov     al, 10
     stosb
     
+.done:
     ; Вычисляем длину
     lea     rax, [buffer]
     sub     rdi, rax
@@ -586,16 +596,14 @@ show_status_with_lamp:
     mov     rdi, buffer
     call    print_string
     
-.no_lamp:
-    pop     r13
     pop     r14
     pop     r15
     ret
 
 ; ==============================================
-; Показать статус обработки
+; Показать статус чтения
 ; ==============================================
-show_processing_status:
+show_read_status:
     push    r15
     push    r14
     
@@ -608,16 +616,174 @@ show_processing_status:
     ; Формируем строку
     mov     rdi, buffer
     
-    ; ">>> Обработка "
-    mov     al, '>'
+    mov     al, ' '
     stosb
     stosb
+    stosb
+    
+    ; Кто читает
+    cmp     byte [last_reader], 1
+    je      .a1_reads
+    cmp     byte [last_reader], 2
+    je      .a2_reads
+    jmp     .unknown
+    
+.a1_reads:
+    mov     al, 'A'
+    stosb
+    mov     al, '1'
+    stosb
+    jmp     .continue
+    
+.a2_reads:
+    mov     al, 'A'
+    stosb
+    mov     al, '2'
+    stosb
+
+.unknown:
+.continue:
+    mov     al, ' '
+    stosb
+    mov     al, 'r'
+    stosb
+    mov     al, 'e'
+    stosb
+    mov     al, 'a'
+    stosb
+    mov     al, 'd'
+    stosb
+    stosb
+    mov     al, ':'
     stosb
     mov     al, ' '
     stosb
-    mov     rsi, board_msg
-    mov     rcx, board_msg_len
-    rep movsb
+    
+    ; Число
+    mov     al, [last_reader]
+    cmp     al, 1
+    je      .show_a1
+    cmp     al, 2
+    je      .show_a2
+    mov     rax, 0
+    jmp     .show_num
+    
+.show_a1:
+    mov     rax, [remembered_a1]
+    jmp     .show_num
+    
+.show_a2:
+    mov     rax, [remembered_a2]
+
+.show_num:
+    call    num_to_str
+    
+    ; Показать оба запомненных значения (для отладки race condition)
+    mov     al, ' '
+    stosb
+    mov     al, '('
+    stosb
+    mov     al, 'A'
+    stosb
+    mov     al, '1'
+    stosb
+    mov     al, '='
+    stosb
+    mov     rax, [remembered_a1]
+    call    num_to_str
+    
+    mov     al, ','
+    stosb
+    mov     al, ' '
+    stosb
+    mov     al, 'A'
+    stosb
+    mov     al, '2'
+    stosb
+    mov     al, '='
+    stosb
+    mov     rax, [remembered_a2]
+    call    num_to_str
+    
+    mov     al, ')'
+    stosb
+    
+    ; Перевод строки
+    mov     al, 10
+    stosb
+    
+    ; Вычисляем длину
+    lea     rax, [buffer]
+    sub     rdi, rax
+    mov     rsi, rdi
+    
+    ; Выводим
+    mov     rdi, buffer
+    call    print_string
+    
+    pop     r14
+    pop     r15
+    ret
+
+; ==============================================
+; Показать статус записи
+; ==============================================
+show_write_status:
+    push    r15
+    push    r14
+    
+    ; Очищаем буфер
+    mov     rdi, buffer
+    mov     rcx, 256
+    xor     al, al
+    rep stosb
+    
+    ; Формируем строку
+    mov     rdi, buffer
+    
+    mov     al, ' '
+    stosb
+    stosb
+    stosb
+    
+    ; Кто пишет
+    cmp     byte [last_reader], 1
+    je      .a1_writes
+    cmp     byte [last_reader], 2
+    je      .a2_writes
+    jmp     .unknown
+    
+.a1_writes:
+    mov     al, 'A'
+    stosb
+    mov     al, '1'
+    stosb
+    jmp     .continue
+    
+.a2_writes:
+    mov     al, 'A'
+    stosb
+    mov     al, '2'
+    stosb
+
+.unknown:
+.continue:
+    mov     al, ' '
+    stosb
+    mov     al, 'w'
+    stosb
+    mov     al, 'r'
+    stosb
+    mov     al, 'o'
+    stosb
+    mov     al, 't'
+    stosb
+    mov     al, 'e'
+    stosb
+    mov     al, ':'
+    stosb
+    mov     al, ' '
+    stosb
     
     ; Число на доске
     mov     rax, [board_number]
@@ -638,49 +804,6 @@ show_processing_status:
     
     pop     r14
     pop     r15
-    ret
-
-; ==============================================
-; Мьютекс для доски
-; ==============================================
-lock_board:
-lock_retry:
-    ; Пытаемся установить lock в 1
-    mov     eax, 1
-    xchg    [board_lock], eax
-    
-    ; Проверяем, был ли lock 0
-    test    eax, eax
-    jz      lock_acquired
-    
-    ; Lock был занят, ждем
-    mov     edi, board_lock
-    mov     esi, FUTEX_WAIT or FUTEX_PRIVATE
-    mov     edx, eax          ; Ожидаемое значение (1)
-    xor     r10, r10
-    xor     r8, r8
-    mov     eax, SYS_futex
-    syscall
-    jmp     lock_retry
-
-lock_acquired:
-    ret
-
-; ==============================================
-; Разблокировка доски
-; ==============================================
-unlock_board:
-    ; Сбрасываем lock в 0
-    mov     dword [board_lock], 0
-    
-    ; Будим одного ждущего
-    mov     edi, board_lock
-    mov     esi, FUTEX_WAKE or FUTEX_PRIVATE
-    mov     edx, 1
-    xor     r10, r10
-    xor     r8, r8
-    mov     eax, SYS_futex
-    syscall
     ret
 
 ; ==============================================
@@ -714,17 +837,17 @@ random_delay:
     ret
 
 ; ==============================================
-; Короткая задержка (потоки A1/A2)
+; Короткая случайная задержка (потоки A1/A2)
 ; ==============================================
-short_delay:
+random_delay_short:
     push    rcx
     call    random
     
-    ; Фиксированная короткая задержка: 5-15ms
-    mov     rbx, 10000000     ; 10ms диапазон
+    ; Диапазон 20-100ms
+    mov     rbx, 80000000     ; 80ms диапазон
     xor     rdx, rdx
     div     rbx
-    add     rdx, 5000000      ; минимум 5ms
+    add     rdx, 20000000     ; минимум 20ms
     
     mov     rdi, rdx
     call    delay_ns
